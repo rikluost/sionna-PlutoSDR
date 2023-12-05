@@ -268,9 +268,3 @@ class SDR(Layer):
         plt.show()
         plt.close()
 
-    # Example usage:
-    # _plot_debug_info(rx_samples, rx_samples_tf, TTI_offset, corr, flat_samples, rx_TTI, add_td_samples, SINR, fails, tx_TTI_p, rx_TTI_p, TTI_corr, tx_samples_max_sample, rx_noise, save_path_prefix='debug_plot')
-
-
-
-
