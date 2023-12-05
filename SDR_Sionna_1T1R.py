@@ -36,7 +36,7 @@ from scipy import signal
 from scipy.stats import pearsonr
 from matplotlib import pyplot as plt
 #from pyinstrument import Profiler # for code optimisation:
-plt.rcParams['font.size'] = 8.0
+plt.rcParams['font.size'] = 9.0
 
 class SDR(Layer):
     r"""
@@ -76,14 +76,14 @@ class SDR(Layer):
         self.sdr_pluto.tx_rf_bandwidth = self.SDR_TX_BANDWIDTH # set the SDR tx filter cutoff
         self.sdr_pluto.tx_destroy_buffer() # empty the tx buffer
 
-        # SETUP sdr rx
+        # SETUP SDR RX
         self.sdr_pluto.rx_lo = self.SDR_TX_FREQ # set the frequency
         self.sdr_pluto.gain_control_mode_chan0 = 'manual' # don't use AGC
         self.sdr_pluto.rx_rf_bandwidth = self.SDR_TX_BANDWIDTH # rx filter cutoff 
         self.sdr_pluto.rx_destroy_buffer() # clear any data from rx buffer
         
         # further variables
-        self.corr_threshold = 0.3 # correlation threshold for TTI detection. Below 0.2 correlation sync probably not right
+        self.corr_threshold = 0.3 # min correlation threshold for TTI detection. Below 0.2 correlation sync probably not right
         self.min_attempts=10 # how many retries before giving up if above thresholds are not met (while increasing TX power each time)
       
     def call(self, SAMPLES, SDR_TX_GAIN=0, SDR_RX_GAIN=30, add_td_samples = 0, debug=False):
@@ -142,6 +142,8 @@ class SDR(Layer):
 
             # calculate the correlation between TX and RX signal and find the start symbol of the first full TTI with 500 samples of noise measurements in front
             TTI_corr = signal.correlate(rx_samples_tf, flat_samples,mode='full',method='fft')
+            TTI_corr_max = tf.math.reduce_max(tf.math.abs(TTI_corr))
+
             TTI_offset = tf.math.argmax(tf.math.abs(TTI_corr[0:int(len(rx_samples_tf)/2)]))-len(flat_samples)+1 
             if TTI_offset < 500+num_samples:
                 TTI_offset = TTI_offset + 500 + num_samples
@@ -162,37 +164,7 @@ class SDR(Layer):
             SINR = 10*tf.experimental.numpy.log10(rx_TTI_p/noise_p) # calculate SINR from received powers
             
             if debug:
-                titletext = f'SINR ={SINR:1.1f}, attempt={fails+1}, TTI start index = {TTI_offset}, correlation = {corr:1.2f}, TX_p/RX_p = {tx_TTI_p/rx_TTI_p:1.2f}'
-                fig, axs = plt.subplots(3, 2)
-                fig.set_size_inches(16, 7)
-                fig.suptitle(titletext)
-                axs[0,0].plot(10*np.log10(abs(rx_samples)/max(abs(rx_samples))), label='RX_dB')
-                axs[0,0].legend()
-                axs[0,0].set_title('TTI received 3 times, starting at random time')
-                axs[0,1].plot((abs(rx_samples_tf)), label='abs(RXsample)')
-                axs[0,1].axvline(x=TTI_offset, c='r', lw=3, label='TTI start')
-                axs[0,1].plot(abs(abs(TTI_corr)/np.max(abs(TTI_corr))), label='Pearson R')
-                axs[0,1].legend()
-                axs[0,1].set_title('Correlator for syncing the start of the second received TTI')
-                
-                axs[1,0].plot(np.abs(flat_samples), label='abs(TX samples)')
-                axs[1,0].set_ylim(0,tx_samples_max_sample)
-                axs[1,0].legend()
-                axs[1,0].set_title('Transmitted signal, one TTI')
-                axs[1,1].plot((abs(rx_TTI)), label='abs(RX samples)')
-                axs[1,1].set_ylim(0,tx_samples_max_sample)
-                axs[1,1].legend()
-                axs[1,1].set_title('Received signal, one TTI, syncronized')
-                
-                axs[2,0].psd(flat_samples, label='TX Signal')
-                axs[2,0].legend()
-                axs[2,0].set_title('Transmitted signal PSD')
-                axs[2,1].psd(rx_TTI, label='RX signal')
-                axs[2,1].psd(rx_noise, label='noise')
-                axs[2,1].legend()
-                axs[2,1].set_title('Received noise PSD and signal PSD')
-                plt.tight_layout()
-                plt.show()
+                self._plot_debug_info(rx_samples, rx_samples_tf, TTI_offset, corr, flat_samples, rx_TTI, tx_samples_max_sample, rx_noise)
                                         
             if fails > self.min_attempts: 
                 print(f"Too many sync failures_1, {fails, self.sdr_pluto.rx_hardwaregain_chan0, self.sdr_pluto.tx_hardwaregain_chan0}")
@@ -231,4 +203,74 @@ class SDR(Layer):
         sdr_time=time.time()-now
 
         return out, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time
+
+
+    def _plot_debug_info(self, rx_samples, rx_samples_tf, TTI_offset, corr, flat_samples, rx_TTI, tx_samples_max_sample, rx_noise):
+        save_path_prefix = "pics/"
+        picsize = (6, 3)
+        
+        # Plot TTI received 3 times, starting at random time
+        fig, ax = plt.subplots(figsize=picsize)
+        ax.plot(10 * np.log10(np.abs(rx_samples) / np.max(np.abs(rx_samples))), label='RX_dB')
+        ax.legend()
+        ax.set_title('Received samples')
+        plt.savefig(f'{save_path_prefix}_plot1.png')
+        plt.show()
+        plt.close()
+
+        # Plot Correlator for syncing the start of the second received TTI
+        fig, ax = plt.subplots(figsize=picsize)
+        ax.plot(np.abs(rx_samples_tf), label='abs(RX sample)')
+        ax.axvline(x=TTI_offset, c='r', lw=3, label='TTI start')
+        ax.plot(np.abs(np.abs(corr) / np.max(np.abs(corr))), label='Pearson R')
+        ax.legend()
+        ax.set_title('Correlator for syncing the start of the second received TTI')
+        plt.savefig(f'{save_path_prefix}_plot2.png')
+        plt.show()
+        plt.close()
+
+        # Plot Transmitted signal, one TTI
+        fig, ax = plt.subplots(figsize=picsize)
+        ax.plot(np.abs(flat_samples), label='abs(TX samples)')
+        ax.set_ylim(0, tx_samples_max_sample)
+        ax.legend()
+        ax.set_title('Transmitted signal, one TTI')
+        plt.savefig(f'{save_path_prefix}_plot3.png')
+        plt.show()
+        plt.close()
+
+        # Plot Received signal, one TTI, synchronized
+        fig, ax = plt.subplots(figsize=picsize)
+        ax.plot(np.abs(rx_TTI), label='abs(RX samples)')
+        ax.set_ylim(0, tx_samples_max_sample)
+        ax.legend()
+        ax.set_title('Received signal, one TTI, synchronized')
+        plt.savefig(f'{save_path_prefix}_plot4.png')
+        plt.show()
+        plt.close()
+
+        # Plot Transmitted signal PSD
+        fig, ax = plt.subplots(figsize=picsize)
+        ax.psd(flat_samples, label='TX Signal')
+        ax.legend()
+        ax.set_title('Transmitted signal PSD')
+        plt.savefig(f'{save_path_prefix}_plot5.png')
+        plt.show()
+        plt.close()
+
+        # Plot Received noise PSD and signal PSD
+        fig, ax = plt.subplots(figsize=picsize)
+        ax.psd(rx_TTI, label='RX signal')
+        ax.psd(rx_noise, label='Noise')
+        ax.legend()
+        ax.set_title('Received noise PSD and signal PSD')
+        plt.savefig(f'{save_path_prefix}_plot6.png')
+        plt.show()
+        plt.close()
+
+    # Example usage:
+    # _plot_debug_info(rx_samples, rx_samples_tf, TTI_offset, corr, flat_samples, rx_TTI, add_td_samples, SINR, fails, tx_TTI_p, rx_TTI_p, TTI_corr, tx_samples_max_sample, rx_noise, save_path_prefix='debug_plot')
+
+
+
 

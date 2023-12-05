@@ -2,9 +2,7 @@
 
 ## Introduction
 
-This repository undertakes the integration of the PlutoSDR radio interface with sionna, presenting an avenue for testing that transcends simulated radio channels and instead leverages authentic radio interfaces.
-
-The PlutoSDR, a cost-effective Software-Defined Radio (SDR), is made and supplied by Analog Devices.
+This repository undertakes the integration of the PlutoSDR radio interface with sionna, presenting an avenue for testing that transcends simulated radio channels and instead leverages authentic radio interfaces. The PlutoSDR, a cost-effective Software-Defined Radio (SDR), is made and supplied by Analog Devices. 
 
 In the current implementation, only 1T1R is implemented, despite the hardware supports 2T2R. 
 
@@ -12,12 +10,45 @@ The included jupyter notebook `Sionna_Pluto_SDR.ipynb` provides an example on ho
 
 Note: The code may benefit from further optimization and clean-up, as the developer acknowledges not being a professional developer.
 
+## Functionality
+
+Inputs modulated IQ signals from sionna modulator, transmits over the radio interface through the TX port of the radio.
+
+![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot3.png.png) 
+
+Fig 1. Original modulated signal
+
+![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot3.png.png) 
+
+Fig 2. Power Spectral Density of the transmitted signal
+
+The signal is transmitted in loop, and 500 zero modulated symbols is placed inbetween the modulated signal for calculating SINR estimate. After reception, the signal looks as in Fig 3.
+
+![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot1.png.png) 
+
+Fig 3. Received signal from three times repeated transmissions
+
+Signals are correlated and startpoint is calculated
+
+![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot2.png.png) 
+
+Fig 4. Received signal with calculated start position
+
+After synchronisation, the power spectral densities for noise and received signal can be calculated. PSD plots are shown in figure 6.
+
+![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot6.png.png) 
+
+Fig 6.
+
+The received IQ signals is scaled with the same magnitude as the input signal and output is compatible for the sionna demodulator.
+
 ## Prerequisites
 
-- sionna 15.1 or later
-- libiio, Analog Device’s library for interfacing hardware
-- libad9361-iio, AD9361 the Analog Devices RF chip
-- pyadi-iio, Python API for PlutoSDR
+- `sionna` 15.1 or later
+- `libiio`, Analog Device’s library for interfacing hardware
+- `libad9361-iio`, AD9361 the Analog Devices RF chip
+- `pyadi-iio`, Python API for PlutoSDR
+- `tensorflow_probability==0.21`
 
 ## Usage
 
