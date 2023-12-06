@@ -38,11 +38,11 @@ Upon successful synchronization, the Power Spectral Densities (PSD) for both the
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot6.png) 
 
-Fig 6.
+Fig 6. Power spectral densities of the received noise during the unmodulated symbols, and modulated symbols
 
 The received In-Phase and Quadrature (IQ) signals undergo scaling, aligning their magnitudes with those of the input signal to ensure compatibility with the Sionna demodulator. The output format is `[IQ, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time]`
 
-In the author's environment, the entire transmit-receive process typically spans a duration of 25 to 40 milliseconds.
+In the author's environment, the entire transmit-receive process typically takes between of 25 to 40 milliseconds.
 
 
 ## Prerequisites
