@@ -1,4 +1,4 @@
-# sionna-PlutoSDR
+# PlutoSDR radio interface layer for Sionna
 
 ## Introduction
 
