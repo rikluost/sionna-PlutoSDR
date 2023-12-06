@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This repository undertakes the integration of the PlutoSDR radio interface with sionna. It allows testing and demonstration over the air connection, without the need for a simulated radio channel. The PlutoSDR, a cost-effective Software-Defined Radio (SDR), is made and supplied by Analog Devices. 
+This repository provides a seamless integration of the PlutoSDR radio interface with the Sionna framework. The primary objective is to facilitate testing and demonstrations of systems with a direct over-the-air connection, eliminating the necessity for a simulated radio channel. It utilizes PlutoSDR, a low-cost Software-Defined Radio (SDR) by Analog Devices. 
 
 In the current implementation, only 1T1R is implemented, despite that the hardware supports 2T2R. 2T2R could be implemented later.
 
