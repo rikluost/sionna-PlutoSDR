@@ -2,7 +2,7 @@
 
 ## Introduction
 
-The project focuses on integrating the PlutoSDR radio into the Sionna framework. The main goal is to enable testing and demonstrations of simulated systems created with Sionna through a genuine over-the-air connection, thereby eliminating the need for a simulated radio channel. The implementation leverages PlutoSDR, an affordable Software-Defined Radio (SDR) developed by Analog Devices.
+This project focuses on integrating the PlutoSDR radio into the Sionna framework. The main goal is to enable testing and demonstrations of simulated systems created with Sionna through a genuine over-the-air connection, thereby eliminating the need for a simulated radio channel. The implementation leverages PlutoSDR, an affordable Software-Defined Radio (SDR) developed by Analog Devices.
 
 The jupyter notebook `Sionna_Pluto_SDR.ipynb` provides an end to end example on how to use the functionality, both, with eager mode, and then as integrated Keras layer integrated in a simulated system.
 
@@ -49,7 +49,6 @@ In the author's environment, the entire transmit-receive process typically takes
 - `libiio`, Analog Device’s library for interfacing hardware
 - `libad9361-iio`, AD9361 the Analog Devices RF chip
 - `pyadi-iio`, Python API for PlutoSDR
-- `tensorflow_probability==0.21`
 
 
 ### Limitations
