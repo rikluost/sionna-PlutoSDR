@@ -39,25 +39,7 @@ from matplotlib import pyplot as plt
 plt.rcParams['font.size'] = 9.0
 
 class SDR(Layer):
-    r"""
-    Layer for implementing 1T1R SDR radio over-the-air connection for Sionna, utilising PlutoSDR radio.
-    Inputs time domain IQ to be transmitted and and outputs the received time domain IQ data, readily synchronized.
 
-    Args:
-        SDR_TX_IP (str): IP address of the TX SDR device
-        SDR_TX_FREQ (int): TX center frequency in Hz
-        SDR_TX_BANDWIDTH (int): SDR filter cutoff
-        SampleRate (int): Sample rate of the SDR
-
-    Returns:
-        out (tf.tensor): received time domain IQ data, readily synchronized
-        SINR (float): SINR of the received signal
-        SDR_TX_GAIN (int): TX gain used in the transmission
-        SDR_RX_GAIN (int): RX gain used in the reception
-        fails (int): how many times the process failed to reach pearson r > self.corr_threshold
-        corr (float): pearson correlation between TX and RX signal
-        sdr_time (float): how long the SDR process took in seconds
-    """
     def __init__(self, SDR_TX_IP, SDR_TX_FREQ, SDR_TX_BANDWIDTH, SampleRate):        
         super().__init__()
 
