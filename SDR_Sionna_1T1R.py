@@ -267,4 +267,3 @@ class SDR(Layer):
         plt.savefig(f'{save_path_prefix}_plot6.png')
         plt.show()
         plt.close()
-

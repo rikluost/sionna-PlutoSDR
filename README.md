@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This repository provides a seamless integration of the PlutoSDR radio interface with the Sionna framework. The primary objective is to facilitate testing and demonstrations of systems with a direct over-the-air connection, eliminating the necessity for a simulated radio channel. It utilizes PlutoSDR, a low-cost Software-Defined Radio (SDR) by Analog Devices. 
+This repository hosts a project with focus on integration of the PlutoSDR radio within the Sionna framework.The primary objective is to facilitate testing and demonstrations of systems with a direct over-the-air connection, eliminating the necessity for a simulated radio channel. It utilizes PlutoSDR, a low-cost Software-Defined Radio (SDR) by Analog Devices. 
 
 In the current implementation, only 1T1R is implemented, despite that the hardware supports 2T2R. 2T2R could be implemented later.
 
@@ -57,8 +57,8 @@ In the author's environment, the entire transmit-receive process typically takes
 ### Limitations
 
 Batch size must be 1.
-Currently supports SISO 1T1R only, with 2T2R functionality potentially added later.
-
+Currently supports SISO 1T1R only, with 2T2R functionality potentially added later. 
+Graph execution won't work.
 
 ## License
 
