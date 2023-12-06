@@ -4,7 +4,7 @@
 
 This repository hosts a project with focus on integration of the PlutoSDR radio within the Sionna framework.The primary objective is to facilitate testing and demonstrations of systems with a direct over-the-air connection, eliminating the necessity for a simulated radio channel. It utilizes PlutoSDR, a low-cost Software-Defined Radio (SDR) by Analog Devices. 
 
-In the current implementation, only 1T1R is implemented, despite that the hardware supports 2T2R. 2T2R could be implemented later.
+Currently 1T1R is implemented, but as the HW supports 2T2R, it could be implemented later.
 
 The included jupyter notebook `Sionna_Pluto_SDR.ipynb` provides an end to end example on how to use the functionality in eager mode, and integrated into Keras model. Graph execution is not supported. 
 
