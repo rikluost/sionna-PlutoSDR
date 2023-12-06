@@ -1,4 +1,4 @@
-# PlutoSDR radio interface layer for Sionna
+# Enabling Over-the-Air Testing: Integration of PlutoSDR into Sionna Framework 
 
 ## Introduction
 
@@ -6,7 +6,7 @@ The project focuses on integrating the PlutoSDR radio into the Sionna framework.
 
 The jupyter notebook `Sionna_Pluto_SDR.ipynb` provides an end to end example on how to use the functionality, both, with eager mode, and then as integrated Keras layer integrated in a simulated system.
 
-Note: The code may well benefit from further optimization and clean-up, as the developer acknowledges not being a professional developer.
+
 
 ## Functionality
 
@@ -57,6 +57,7 @@ In the author's environment, the entire transmit-receive process typically takes
 - Currently supports SISO 1T1R only, with 2T2R functionality potentially added later. 
 - Batch size must be 1.
 - Graph execution is not supported.
+- The developer acknowledges not being a professional developer, the code may well benefit from further optimization and clean-up.
 
 ## License
 
