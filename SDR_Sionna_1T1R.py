@@ -21,21 +21,19 @@ Limitation, the batch size must be 1!!!!!!
 
 Tested to work with the sionna ofdm modulator and demodulator, however any other should work
 
-This supports only 1T1R (2T2R is in the works)
+Current implementation supports only 1T1R, but as the HW supports 2T2R, it might be supported later. 
+Note that 2T2R with pluto requires additional pigtails and  a bit of DIY.
 
 """
 
 import adi
 import numpy as np
-import sys
 import tensorflow as tf
 from tensorflow.keras.layers import Layer
-import tensorflow_probability as tfp
 import time
 from scipy import signal
 from scipy.stats import pearsonr
 from matplotlib import pyplot as plt
-#from pyinstrument import Profiler # for code optimisation:
 plt.rcParams['font.size'] = 9.0
 
 class SDR(Layer):
@@ -152,7 +150,7 @@ class SDR(Layer):
                 print(f"Too many sync failures_1, {fails, self.sdr_pluto.rx_hardwaregain_chan0, self.sdr_pluto.tx_hardwaregain_chan0}")
                 sys.exit(1)
 
-            # check if the correlation is reasonable to assume sync is right, if not increase power and/or rx sensitivity
+            # check if the correlation is reasonable to assume sync is right, if not increase TX power and/or RX sensitivity
             if (corr >= self.corr_threshold):
                 success = 1
 
