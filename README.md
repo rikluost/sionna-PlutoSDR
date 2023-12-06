@@ -22,13 +22,13 @@ Fig 1. Original modulated signal
 
 Fig 2. Power Spectral Density of the transmitted signal
 
-The transmission process involves a continuous loop of transmitting the modulated signal. To facilitate the calculation of Signal-to-Noise Ratio (SINR) estimates, 500 zero-modulated symbols are strategically inserted between successive instances of the modulated signal. Following reception, the observed signal exhibits a characteristic appearance, as illustrated in Figure 3.
+The transmission process utilises a cyclic transmission of the modulated signal. To facilitate the calculation of Signal-to-Noise Ratio (SINR) estimates, 500 zero-modulated symbols are strategically inserted between successive instances of the modulated signal. Following the reception, the observed signal is illustrated in Figure 3.
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot1.png) 
 
 Fig 3. Received signal from three times repeated transmissions
 
-The transmitted and received signals undergo correlation analysis, and the starting point is subsequently determined through this process.
+The transmitted and received signals undergo correlation analysis, and the starting point of the transmityted signal is subsequently determined.
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot2.png) 
 
@@ -40,7 +40,7 @@ Upon successful synchronization, the Power Spectral Densities (PSD) for both the
 
 Fig 6.
 
-The received In-Phase and Quadrature (IQ) signals undergo scaling, aligning their magnitudes with those of the input signal. This ensures compatibility with the Sionna demodulator. The output format is [IQ, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time]
+The received In-Phase and Quadrature (IQ) signals undergo scaling, aligning their magnitudes with those of the input signal to ensure compatibility with the Sionna demodulator. The output format is `[IQ, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time]`
 
 In the author's environment, the entire transmit-receive process typically spans a duration of 25 to 40 milliseconds.
 
