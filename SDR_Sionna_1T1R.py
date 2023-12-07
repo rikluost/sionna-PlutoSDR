@@ -15,9 +15,7 @@ Prerequisites (tested with Ubuntu 22.04) are:
 - libad9361-iio, AD9361 the Analog Devices RF chip
 - pyadi-iio, Python API for PlutoSDR
 
-See e.g. https://pysdr.org/content/pluto_intro.html for how to install
-
-Limitation, the batch size must be 1!!!!!!
+Limitation, the batch size must be 1
 
 Tested to work with the sionna ofdm modulator and demodulator, however any other should work
 
@@ -68,7 +66,7 @@ class SDR(Layer):
         self.corr_threshold = 0.2 # min correlation threshold for TTI detection. Below 0.2 correlation sync probably not right
         self.min_attempts=10 # how many retries before giving up if above thresholds are not met (while increasing TX power each time)
 
-    def call(self, SAMPLES, SDR_TX_GAIN=0, SDR_RX_GAIN=30, add_td_samples = 0, debug=False):
+    def call(self, SAMPLES, SDR_TX_GAIN=0, SDR_RX_GAIN=30, add_td_symbols = 0, debug=False):
         now = time.time() # for measuing the duration of the process
         n_zeros = 500 # number of leading zeros for noise floor measurement
         out_shape = list(SAMPLES.shape) # store the input tensor shape
@@ -141,12 +139,12 @@ class SDR(Layer):
 
             noise_p = tf.math.reduce_variance(rx_noise) # noise power
 
-            rx_samples_tf = rx_samples_tf[TTI_offset:TTI_offset+num_samples+add_td_samples] # rx symbols
+            rx_samples_tf = rx_samples_tf[TTI_offset:TTI_offset+num_samples+add_td_symbols] # rx symbols
 
 
             rx_p = tf.math.reduce_variance(rx_samples_tf) # RX signal power 
 
-            corr = pearsonr(tf.math.abs(tx_samples), tf.math.abs(rx_samples_tf[:-add_td_samples]))[0]
+            corr = pearsonr(tf.math.abs(tx_samples), tf.math.abs(rx_samples_tf[:-add_td_symbols]))[0]
 
             SINR = 10*tf.experimental.numpy.log10(rx_p/noise_p) # calculate SINR from received powers
             
@@ -180,7 +178,7 @@ class SDR(Layer):
         self.sdr_pluto.tx_destroy_buffer() # shut the transmitter down
                 
         try :
-            out_shape[-1] = out_shape[-1]+add_td_samples
+            out_shape[-1] = out_shape[-1]+add_td_symbols
             out = tf.reshape(rx_samples_tf, out_shape)
 
         except:
