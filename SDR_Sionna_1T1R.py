@@ -96,7 +96,7 @@ class SDR(Layer):
             samples_with_leading_zeros = tf.concat([leading_zeroes, tx_samples], axis=0) # add the quiet for noise mesurements
             return samples_with_leading_zeros
         
-        def _find_start_point(rx_samples_tf, tx_samples, num_samples): # find the start symbol of the first full TTI
+        def _find_start_point(rx_samples_tf, tx_samples,): # find the start symbol of the first full TTI
 
             TTI_corr = tf.nn.conv1d(tf.reshape(tf.math.abs(rx_samples_tf), [1, -1, 1]), filters=tf.reshape(tf.math.abs(tx_samples), [-1, 1, 1]), stride=1, padding='SAME')
             TTI_corr = tf.reshape(TTI_corr, [-1])
@@ -134,7 +134,7 @@ class SDR(Layer):
             # set the same stdev to output samples as in the original input samples
             std_multiplier = np.float16(tx_std/ rx_std)*0.9 # for calculating new multiplier for same stdev in TX and RX. Not sure where the 0.9 need comes from
             rx_samples_tf = tf.math.multiply(rx_samples_tf, std_multiplier) # set the stdev
-            TTI_offset = _find_start_point(rx_samples_tf, tx_samples, num_samples) # find the start symbol 
+            TTI_offset = _find_start_point(rx_samples_tf, tx_samples) # find the start symbol 
             rx_noise =  rx_samples_tf[TTI_offset-n_zeros+20:TTI_offset-20] # noise samples for SINR calculation
 
             noise_p = tf.math.reduce_variance(rx_noise) # noise power
