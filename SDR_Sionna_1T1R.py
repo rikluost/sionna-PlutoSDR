@@ -64,7 +64,7 @@ class SDR(Layer):
         self.corr_threshold = 0.2 # min correlation threshold for TTI detection. Below 0.2 correlation sync probably not right
         self.min_attempts=10 # how many retries before giving up if above thresholds are not met (while increasing TX power each time)
 
-    def call(self, SAMPLES, SDR_TX_GAIN=0, SDR_RX_GAIN=30, add_td_symbols = 0, debug=False):
+    def call(self, SAMPLES, SDR_TX_GAIN=0, SDR_RX_GAIN=30, add_td_symbols = 0, debug=False, power_max_tx_scaling=1):
         now = time.time() # for measuing the duration of the process
         n_zeros = 500 # number of leading zeros for noise floor measurement
         out_shape = list(SAMPLES.shape) # store the input tensor shape
@@ -75,26 +75,29 @@ class SDR(Layer):
         fails = 0 # how many times the process failed to reach pearson r > self.corr_threshold
         success = 0 #  how many times the process reached pearson r > self.corr_threshold
 
+        # DC offset removal from signal, stdev calculation
         def _offset_removal(samples):
             stdev =  tf.math.reduce_std(samples) # standard deviation of the input samples
             tx_mean = np.complex64(tf.math.reduce_mean(samples)) # mean of the input samples
             samples = tf.math.subtract(samples, tx_mean) # remove DC offset
             return samples, stdev # retun the samples and the stdev of the input samples
 
-        def _sdr_tx_scaling(tx_samples):
+        # scale the samples for SDR input
+        def _sdr_tx_scaling(tx_samples, power_max_tx_scaling):
             tx_samples_abs = tf.math.abs(tx_samples) # absolute values of the samples
             tx_samples_abs_max = np.float32(tf.reduce_max(tx_samples_abs,0)) # take the maximum value of the samples
             tx_samples = tf.math.divide(tx_samples , tx_samples_abs_max) # scale the tx_samples to max 1
-            tx_samples = tf.math.multiply(tx_samples, 2**14) # = 2**14 # scale the samples to 16-bit    
+            tx_samples = tf.math.multiply(tx_samples * power_max_tx_scaling, 2**14) # = 2**14 # scale the samples to 16-bit    
             return tx_samples, tx_samples_abs_max
         
-        def _add_leading_zeros(tx_samples, n_zeros=n_zeros): # e.g. 500 leading zeros for noise floor measurement.
-            leading_zeroes = tf.zeros(n_zeros, dtype=tf.dtypes.complex64) # leading zeroes for noise floor measurement
-            samples_with_leading_zeros = tf.concat([leading_zeroes, tx_samples], axis=0) # add the quiet for noise mesurements
+        # add leading zeros for noise floor measurement
+        def _add_leading_zeros(tx_samples, n_zeros=n_zeros): # e.g. 500 leading zeros 
+            leading_zeroes = tf.zeros(n_zeros, dtype=tf.dtypes.complex64) # leading zeroes f
+            samples_with_leading_zeros = tf.concat([leading_zeroes, tx_samples], axis=0) # add the leading zeros to the samples
             return samples_with_leading_zeros
         
-        def _find_start_point(rx_samples_tf, tx_samples,): # find the start symbol of the first full TTI
-
+        # find the start symbol and calculate the offset
+        def _find_start_point(rx_samples_tf, tx_samples,): 
             TTI_corr = tf.nn.conv1d(tf.reshape(tf.math.abs(rx_samples_tf), [1, -1, 1]), filters=tf.reshape(tf.math.abs(tx_samples), [-1, 1, 1]), stride=1, padding='SAME')
             TTI_corr = tf.reshape(TTI_corr, [-1])
             TTI_offset = tf.math.argmax(TTI_corr[0:len(rx_samples_tf)-len(tx_samples)])-len(tx_samples)//2+1
@@ -102,15 +105,16 @@ class SDR(Layer):
                 TTI_offset = TTI_offset + n_zeros + len(tx_samples)
             return TTI_offset.numpy()
         
-        def _adjust_stdev(samples, rx_dev, tx_dev): # adjust the stdev of the received samples to match the transmitted samples
-            std_multiplier = np.float16(tx_dev/ rx_dev)*0.9
+        # adjust the stdev of the received samples to match the transmitted samples
+        def _adjust_stdev(samples, rx_dev, tx_dev):
+            std_multiplier = np.float16(tx_dev/ rx_dev)*0.9 # not sure why 0.9 is needed, but it seems to work
             samples = tf.math.multiply(samples, std_multiplier)
             return samples
         
-        # prepare the tx signal, remove DC offset and scale for SDR input
+        # prepare the tx signal, remove DC offset and scale for SDR input, add leading zeros
         tx_samples, tx_std = _offset_removal(SAMPLES)
-        tx_samples, tx_samples_max_sample = _sdr_tx_scaling(tx_samples)
-        tx_samples_out = _add_leading_zeros(tx_samples) # add leading zeros for noise floor measurement
+        tx_samples, tx_max_sample = _sdr_tx_scaling(tx_samples, power_max_tx_scaling)
+        tx_samples_out = _add_leading_zeros(tx_samples) 
 
         # prepare SDR
         self.sdr_pluto.tx_cyclic_buffer = True # enable cyclic buffer for TX
@@ -158,7 +162,7 @@ class SDR(Layer):
             
             # plot debug graphs 
             if debug:
-                self._plot_debug_info(tx_samples, rx_samples, TTI_offset, rx_samples_tf, tx_samples_max_sample, rx_noise)
+                self._plot_debug_info(SAMPLES, rx_samples, TTI_offset, rx_samples_tf, tx_max_sample, rx_noise)
                                         
             # if the process fails too many times, give up
             if fails > self.min_attempts: 
@@ -205,46 +209,50 @@ class SDR(Layer):
         return out, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time
     
         
-    def _plot_debug_info(self, tx_samples, rx_samples, TTI_offset, rx_TTI, tx_samples_max_sample, rx_noise):
+    def _plot_debug_info(self, tx_samples, all_rx_samples, TTI_offset, rx_samples, tx_samples_max_sample, rx_noise, save=False):
         save_path_prefix = "pics/"
         picsize = (6, 3)
         
         # Plot TTI received 3 times, starting at random time
         fig, ax = plt.subplots(figsize=picsize)
-        ax.plot(10 * np.log10(np.abs(rx_samples) / np.max(np.abs(rx_samples))), label='RX_dB')
+        ax.plot(10 * np.log10(np.abs(all_rx_samples) / np.max(np.abs(all_rx_samples))), label='RX_dB')
         ax.legend()
         ax.set_title('Received samples')
-        plt.savefig(f'{save_path_prefix}_plot1.png')
+        if save:
+            plt.savefig(f'{save_path_prefix}_plot1.png')
         plt.show()
         plt.close()
 
         # Plot Correlator for syncing the start of the second received TTI
         fig, ax = plt.subplots(figsize=picsize)
-        ax.plot(np.abs(rx_samples), label='abs(RX sample)')
+        ax.plot(np.abs(all_rx_samples), label='abs(RX sample)')
         ax.axvline(x=TTI_offset, c='r', lw=3, label='TTI start')
         ax.legend()
         ax.set_title('Correlator for syncing the start of the second received TTI')
-        plt.savefig(f'{save_path_prefix}_plot2.png')
+        if save:
+            plt.savefig(f'{save_path_prefix}_plot2.png')
         plt.show()
         plt.close()
 
         # Plot Transmitted signal, one TTI
         fig, ax = plt.subplots(figsize=picsize)
-        ax.plot(np.abs(tx_samples)/np.max(np.abs(tx_samples)), label='abs(TX samples)')
-        #ax.set_ylim(0, tx_samples_max_sample)
+        ax.plot(np.abs(tx_samples), label='abs(TX samples)')
+        ax.set_ylim(0, tx_samples_max_sample)
         ax.legend()
         ax.set_title('Transmitted signal, one TTI')
-        plt.savefig(f'{save_path_prefix}_plot3.png')
+        if save:
+            plt.savefig(f'{save_path_prefix}_plot3.png')
         plt.show()
         plt.close()
 
         # Plot Received signal, one TTI, synchronized
         fig, ax = plt.subplots(figsize=picsize)
-        ax.plot(np.abs(rx_TTI), label='abs(RX samples)')
+        ax.plot(np.abs(rx_samples), label='abs(RX samples)')
         ax.set_ylim(0, tx_samples_max_sample)
         ax.legend()
-        ax.set_title('Received signal, one TTI, synchronized')
-        plt.savefig(f'{save_path_prefix}_plot4.png')
+        ax.set_title('Received signal, synchronized')
+        if save:
+            plt.savefig(f'{save_path_prefix}_plot4.png')
         plt.show()
         plt.close()
 
@@ -253,16 +261,18 @@ class SDR(Layer):
         ax.psd(tx_samples, label='TX Signal')
         ax.legend()
         ax.set_title('Transmitted signal PSD')
-        plt.savefig(f'{save_path_prefix}_plot5.png')
+        if save:
+            plt.savefig(f'{save_path_prefix}_plot5.png')
         plt.show()
         plt.close()
 
         # Plot Received noise PSD and signal PSD
         fig, ax = plt.subplots(figsize=picsize)
-        ax.psd(rx_TTI, label='RX signal')
+        ax.psd(rx_samples, label='RX signal')
         ax.psd(rx_noise, label='Noise')
         ax.legend()
         ax.set_title('Received noise PSD and signal PSD')
-        plt.savefig(f'{save_path_prefix}_plot6.png')
+        if save:
+            plt.savefig(f'{save_path_prefix}_plot6.png')
         plt.show()
         plt.close()

@@ -57,7 +57,6 @@ These pictures are created with the `Sionna_Pluto_SDR.ipynb` notebook located in
 - Currently supports SISO 1T1R only, with 2T2R functionality potentially added later. 
 - Batch size must be 1.
 - Graph execution is not supported.
-- The developer acknowledges not being a professional developer, the code may well benefit from further optimization and clean-up.
 
 ## License
 
