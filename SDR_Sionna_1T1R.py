@@ -20,7 +20,7 @@ Limitation, the batch size must be 1
 Tested to work with the sionna ofdm modulator and demodulator, however any other should work
 
 Current implementation supports only 1T1R, but as the HW supports 2T2R, it might be supported later. 
-Note that 2T2R with pluto requires additional pigtails and  a bit of DIY.
+Note that 2T2R with pluto requires additional RF pigtails and a bit of DIY.
 
 """
 
@@ -34,7 +34,6 @@ import sys
 from scipy.stats import pearsonr
 from matplotlib import pyplot as plt
 plt.rcParams['font.size'] = 9.0
-
 
 class SDR(Layer):
 
@@ -89,10 +88,10 @@ class SDR(Layer):
             stdev =  tf.math.reduce_std(flat_samples) # standard deviation of the input samples
             tx_mean = np.complex64(tf.math.reduce_mean(flat_samples)) # mean of the input samples
             samples = tf.math.subtract(flat_samples, tx_mean) # remove DC offset
-            return samples, stdev
+            return samples, stdev # retun the samples and the stdev of the input samples
         
-        def _add_leading_zeros(tx_samples, n_zeros=n_zeros):
-            leading_zeroes = tf.zeros(n_zeros, dtype=tf.dtypes.complex64) # leading 500 zeroes for noise floor measurement
+        def _add_leading_zeros(tx_samples, n_zeros=n_zeros): # e.g. 500 leading zeros for noise floor measurement.
+            leading_zeroes = tf.zeros(n_zeros, dtype=tf.dtypes.complex64) # leading zeroes for noise floor measurement
             samples_with_leading_zeros = tf.concat([leading_zeroes, tx_samples], axis=0) # add the quiet for noise mesurements
             return samples_with_leading_zeros
         
@@ -101,12 +100,20 @@ class SDR(Layer):
             TTI_corr = tf.nn.conv1d(tf.reshape(tf.math.abs(rx_samples_tf), [1, -1, 1]), filters=tf.reshape(tf.math.abs(tx_samples), [-1, 1, 1]), stride=1, padding='SAME')
             TTI_corr = tf.reshape(TTI_corr, [-1])
             TTI_offset = tf.math.argmax(TTI_corr[0:len(rx_samples_tf)-len(tx_samples)])-len(tx_samples)//2+1
-            if TTI_offset < n_zeros + len(tx_samples): # 
+            #if TTI_offset < n_zeros + len(tx_samples): # 
+            if TTI_offset < n_zeros: # 
                 TTI_offset = TTI_offset + n_zeros + len(tx_samples)
             return TTI_offset.numpy()
         
-        tx_samples, tx_std = _offset_removal(SAMPLES) # remove DC offsets
-        tx_samples, tx_samples_max_sample = _sdr_scaling(tx_samples) # scale for SDR input
+        def _adjust_stdev(samples, rx_dev, tx_dev): # adjust the stdev of the received samples to match the transmitted samples
+            std_multiplier = np.float16(tx_dev/ rx_dev)*0.9
+            samples = tf.math.multiply(samples, std_multiplier)
+            return samples
+        
+        # prepare the tx signal, remove DC offset and scale for SDR input
+        tx_samples, tx_std = _offset_removal(SAMPLES)
+        tx_samples, tx_samples_max_sample = _sdr_scaling(tx_samples)
+        tx_samples_out = _add_leading_zeros(tx_samples) # add leading zeros for noise floor measurement
 
         # prepare SDR
         self.sdr_pluto.tx_cyclic_buffer = True # enable cyclic buffer for TX
@@ -114,10 +121,9 @@ class SDR(Layer):
         self.sdr_pluto.rx_hardwaregain_chan0 = int(SDR_RX_GAIN) # set the RX gain
         self.sdr_pluto.rx_buffer_size = (num_samples+n_zeros)*3 # set the RX buffer size to 3 times the number of samples
        
-        # start the TX
+        # start the TX and send the samples
         self.sdr_pluto.tx_destroy_buffer() # empty TX buffer
-        tx_samples_out = _add_leading_zeros(tx_samples) # add leading zeros for noise floor measurement
-        self.sdr_pluto.tx(tx_samples_out) # start transmitting the samples in cyclic manner
+        self.sdr_pluto.tx(tx_samples_out) # start transmitting the samples in a cyclic manner
 
         while success == 0:        
             
@@ -128,29 +134,36 @@ class SDR(Layer):
             # convert received IQ samples to tf tensor
             rx_samples_tf = tf.convert_to_tensor(rx_samples, dtype=tf.complex64)
 
-            # remove any offset
+            # remove any offset and calculate standard deviation of the received samples
             rx_samples_tf, rx_std =  _offset_removal(rx_samples_tf)
 
             # set the same stdev to output samples as in the original input samples
-            std_multiplier = np.float16(tx_std/ rx_std)*0.9 # for calculating new multiplier for same stdev in TX and RX. Not sure where the 0.9 need comes from
-            rx_samples_tf = tf.math.multiply(rx_samples_tf, std_multiplier) # set the stdev
-            TTI_offset = _find_start_point(rx_samples_tf, tx_samples) # find the start symbol 
-            rx_noise =  rx_samples_tf[TTI_offset-n_zeros+20:TTI_offset-20] # noise samples for SINR calculation
+            rx_samples_tf = _adjust_stdev(rx_samples_tf, rx_std, tx_std)
 
-            noise_p = tf.math.reduce_variance(rx_noise) # noise power
+            # find the start symbol
+            TTI_offset = _find_start_point(rx_samples_tf, tx_samples) 
 
-            rx_samples_tf = rx_samples_tf[TTI_offset:TTI_offset+num_samples+add_td_symbols] # rx symbols
+            # calculate noise floor
+            rx_noise =  rx_samples_tf[TTI_offset-n_zeros+20:TTI_offset-20] 
+            noise_p = tf.math.reduce_variance(rx_noise) 
 
+            # cut the received samples to the length of the transmitted samples + additional symbols, starting from the start symbol
+            rx_samples_tf = rx_samples_tf[TTI_offset:TTI_offset+num_samples+add_td_symbols]
 
-            rx_p = tf.math.reduce_variance(rx_samples_tf) # RX signal power 
+            # calculate the received signal power
+            rx_p = tf.math.reduce_variance(rx_samples_tf)
 
+            # calculate the correlation between the transmitted and received samples
             corr = pearsonr(tf.math.abs(tx_samples), tf.math.abs(rx_samples_tf[:-add_td_symbols]))[0]
 
-            SINR = 10*tf.experimental.numpy.log10(rx_p/noise_p) # calculate SINR from received powers
+            # calculate SINR
+            SINR = 10*tf.experimental.numpy.log10(rx_p/noise_p)
             
+            # plot debug graphs 
             if debug:
-                self._plot_debug_info(tx_samples, rx_samples, TTI_offset, corr, rx_samples_tf, tx_samples_max_sample, rx_noise)
+                self._plot_debug_info(tx_samples, rx_samples, TTI_offset, rx_samples_tf, tx_samples_max_sample, rx_noise)
                                         
+            # if the process fails too many times, give up
             if fails > self.min_attempts: 
                 print(f"Too many sync failures_1, {fails, self.sdr_pluto.rx_hardwaregain_chan0, self.sdr_pluto.tx_hardwaregain_chan0}")
                 sys.exit(1)
@@ -159,6 +172,7 @@ class SDR(Layer):
             if (corr >= self.corr_threshold):
                 success = 1
 
+            # if the correlation is not good enough, increase TX power and/or RX sensitivity
             else:    
                 fails+=1
 
@@ -175,21 +189,26 @@ class SDR(Layer):
                     SDR_TX_GAIN = self.sdr_pluto.tx_hardwaregain_chan0
                     SDR_RX_GAIN = self.sdr_pluto.rx_hardwaregain_chan0
                 
-        self.sdr_pluto.tx_destroy_buffer() # shut the transmitter down
-                
+        self.sdr_pluto.tx_destroy_buffer() # shut the transmitter down and ensure the buffer is empty
+
+        # reshape the output tensor to match the input tensor shape        
         try :
             out_shape[-1] = out_shape[-1]+add_td_symbols
             out = tf.reshape(rx_samples_tf, out_shape)
 
+        # if the process fails, exit
         except:
             print("Something failed!")
             sys.exit(1)
  
+        # calculate the duration of the process
         sdr_time=time.time()-now
 
+        # return the output tensor, SINR, TX and RX gains, number of failures, correlation and the duration of the process
         return out, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time
     
-    def _plot_debug_info(self, tx_samples, rx_samples, TTI_offset, corr, rx_TTI, tx_samples_max_sample, rx_noise):
+        
+    def _plot_debug_info(self, tx_samples, rx_samples, TTI_offset, rx_TTI, tx_samples_max_sample, rx_noise):
         save_path_prefix = "pics/"
         picsize = (6, 3)
         

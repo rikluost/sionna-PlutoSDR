@@ -33,7 +33,7 @@ The transmitted and received IQ signals undergo correlation analysis to determin
 
 Fig 4. Received signal with calculated start position
 
-Upon successful synchronization, the PSD for both the received signal and the accompanying noise can be calculated. The resulting PSD plots are visualized in Figure 6.
+Upon successful synchronization, the PSD for both the received signal and the accompanying noise can be calculated. The resulting plots are visualized in Figure 6.
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot6.png) 
 
