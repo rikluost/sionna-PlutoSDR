@@ -69,25 +69,24 @@ class SDR(Layer):
         n_zeros = 500 # number of leading zeros for noise floor measurement
         out_shape = list(SAMPLES.shape) # store the input tensor shape
         num_samples = SAMPLES.shape[-1] # number of samples in the input
+        SAMPLES = tf.reshape(SAMPLES, [-1]) # flatten the input tensor
         
         # internal counters
         fails = 0 # how many times the process failed to reach pearson r > self.corr_threshold
         success = 0 #  how many times the process reached pearson r > self.corr_threshold
 
-        def _sdr_scaling(tx_samples):
-            tx_samples_abs = tf.math.abs(tx_samples) # absolute values of the samples
-            tx_samples_abs_max = tf.reduce_max(tx_samples_abs,0) # take the maximum value of the samples
-            tx_samples_max_sample = np.float32(tx_samples_abs_max) # convert to float32
-            tx_samples = tf.math.divide(tx_samples , tx_samples_max_sample) # scale the tx_samples to max 1
-            tx_samples = tf.math.multiply(tx_samples, 2**14) # = 2**14 # scale the samples to 16-bit    
-            return tx_samples, tx_samples_max_sample
-        
         def _offset_removal(samples):
-            flat_samples = tf.reshape(samples, [-1]) # flatten the input samples
-            stdev =  tf.math.reduce_std(flat_samples) # standard deviation of the input samples
-            tx_mean = np.complex64(tf.math.reduce_mean(flat_samples)) # mean of the input samples
-            samples = tf.math.subtract(flat_samples, tx_mean) # remove DC offset
+            stdev =  tf.math.reduce_std(samples) # standard deviation of the input samples
+            tx_mean = np.complex64(tf.math.reduce_mean(samples)) # mean of the input samples
+            samples = tf.math.subtract(samples, tx_mean) # remove DC offset
             return samples, stdev # retun the samples and the stdev of the input samples
+
+        def _sdr_tx_scaling(tx_samples):
+            tx_samples_abs = tf.math.abs(tx_samples) # absolute values of the samples
+            tx_samples_abs_max = np.float32(tf.reduce_max(tx_samples_abs,0)) # take the maximum value of the samples
+            tx_samples = tf.math.divide(tx_samples , tx_samples_abs_max) # scale the tx_samples to max 1
+            tx_samples = tf.math.multiply(tx_samples, 2**14) # = 2**14 # scale the samples to 16-bit    
+            return tx_samples, tx_samples_abs_max
         
         def _add_leading_zeros(tx_samples, n_zeros=n_zeros): # e.g. 500 leading zeros for noise floor measurement.
             leading_zeroes = tf.zeros(n_zeros, dtype=tf.dtypes.complex64) # leading zeroes for noise floor measurement
@@ -99,7 +98,6 @@ class SDR(Layer):
             TTI_corr = tf.nn.conv1d(tf.reshape(tf.math.abs(rx_samples_tf), [1, -1, 1]), filters=tf.reshape(tf.math.abs(tx_samples), [-1, 1, 1]), stride=1, padding='SAME')
             TTI_corr = tf.reshape(TTI_corr, [-1])
             TTI_offset = tf.math.argmax(TTI_corr[0:len(rx_samples_tf)-len(tx_samples)])-len(tx_samples)//2+1
-            #if TTI_offset < n_zeros + len(tx_samples): # 
             if TTI_offset < n_zeros: # 
                 TTI_offset = TTI_offset + n_zeros + len(tx_samples)
             return TTI_offset.numpy()
@@ -111,7 +109,7 @@ class SDR(Layer):
         
         # prepare the tx signal, remove DC offset and scale for SDR input
         tx_samples, tx_std = _offset_removal(SAMPLES)
-        tx_samples, tx_samples_max_sample = _sdr_scaling(tx_samples)
+        tx_samples, tx_samples_max_sample = _sdr_tx_scaling(tx_samples)
         tx_samples_out = _add_leading_zeros(tx_samples) # add leading zeros for noise floor measurement
 
         # prepare SDR
