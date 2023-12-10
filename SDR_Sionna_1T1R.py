@@ -30,20 +30,19 @@ import tensorflow as tf
 from tensorflow.keras.layers import Layer
 import time
 import sys
-#from scipy import signal
 from scipy.stats import pearsonr
 from matplotlib import pyplot as plt
 plt.rcParams['font.size'] = 9.0
 
 class SDR(Layer):
 
-    def __init__(self, SDR_TX_IP, SDR_TX_FREQ, SDR_TX_BANDWIDTH, SampleRate):        
+    def __init__(self, SDR_TX_IP, SDR_TX_FREQ, RF_BANDWIDTH, SampleRate):        
         super().__init__()
 
         # class variables from inputs
         self.SDR_TX_IP = SDR_TX_IP # IP address of the TX SDR device
         self.SDR_TX_FREQ = int(SDR_TX_FREQ) # TX center frequency in Hz
-        self.SDR_TX_BANDWIDTH = int(SDR_TX_BANDWIDTH) # SDR filter cutoff
+        self.SDR_TX_BANDWIDTH = int(RF_BANDWIDTH) # SDR filter cutoff
         self.SampleRate = SampleRate # Sample rate of the SDR
 
         # setup the SDR
