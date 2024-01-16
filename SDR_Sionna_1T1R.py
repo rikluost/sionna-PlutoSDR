@@ -35,8 +35,21 @@ from matplotlib import pyplot as plt
 plt.rcParams['font.size'] = 9.0
 
 class SDR(Layer):
+    """
+    Software Defined Radio (SDR) Layer using PlutoSDR for transmission and reception 
+    of IQ samples over-the-air.
 
-    def __init__(self, SDR_TX_IP, SDR_TX_FREQ, RF_BANDWIDTH, SampleRate):        
+    Attributes:
+        SDR_TX_IP (str): IP address of the TX SDR device.
+        SDR_TX_FREQ (int): TX center frequency in Hz.
+        SDR_TX_BANDWIDTH (int): SDR filter cutoff.
+        SampleRate (float): Sample rate of the SDR.
+    """
+
+    def __init__(self, SDR_TX_IP, SDR_TX_FREQ, RF_BANDWIDTH, SampleRate): 
+        """
+        Initializes the SDR layer with provided configuration.
+        """       
         super().__init__()
 
         # class variables from inputs
@@ -64,7 +77,24 @@ class SDR(Layer):
         self.corr_threshold = 0.2 # min correlation threshold for TTI detection. Below 0.2 correlation sync probably not right
         self.min_attempts=10 # how many retries before giving up if above thresholds are not met (while increasing TX power each time)
 
-    def call(self, SAMPLES, SDR_TX_GAIN=0, SDR_RX_GAIN=30, add_td_symbols = 0, debug=False, power_max_tx_scaling=1):
+    def call(self, SAMPLES, SDR_TX_GAIN=0, SDR_RX_GAIN=30, add_td_symbols = 0, threshold=6, debug=False, power_max_tx_scaling=1):
+        """
+        Process the input samples for transmission and receive the synchronized output.
+
+        Args:
+        SAMPLES (Tensor): Input tensor of IQ samples to be transmitted.
+        SDR_TX_GAIN (int): Transmit gain for the SDR.
+        SDR_RX_GAIN (int): Receive gain for the SDR.
+        add_td_symbols (int): Number of additional time-domain symbols.
+        threshold (int): Threshold for correlation.
+        debug (bool): Flag to enable debugging plots.
+        power_max_tx_scaling (float): Scaling factor for transmission power.
+
+        Returns:
+        Tuple: Containing output tensor, SINR, TX and RX gains, number of failures, 
+               correlation and the duration of the process.
+        """
+
         now = time.time() # for measuing the duration of the process
         n_zeros = 500 # number of leading zeros for noise floor measurement
         out_shape = list(SAMPLES.shape) # store the input tensor shape
@@ -97,13 +127,29 @@ class SDR(Layer):
             return samples_with_leading_zeros
         
         # find the start symbol and calculate the offset
-        def _find_start_point(rx_samples_tf, tx_samples,): 
-            TTI_corr = tf.nn.conv1d(tf.reshape(tf.math.abs(rx_samples_tf), [1, -1, 1]), filters=tf.reshape(tf.math.abs(tx_samples), [-1, 1, 1]), stride=1, padding='SAME')
-            TTI_corr = tf.reshape(TTI_corr, [-1])
-            TTI_offset = tf.math.argmax(TTI_corr[0:len(rx_samples_tf)-len(tx_samples)])-len(tx_samples)//2+1
-            if TTI_offset < n_zeros: # 
-                TTI_offset = TTI_offset + n_zeros + len(tx_samples)
-            return TTI_offset.numpy()
+        def _find_start_point(rx_samples_tf, tx_samples, threshold=threshold): 
+            len_tx = len(tx_samples) # 
+
+            rx_samples_tf = rx_samples_tf[n_zeros:-len_tx]
+
+            TTI_corr_real = tf.nn.conv1d(tf.reshape(tf.math.real(rx_samples_tf), [1, -1, 1]), filters=tf.reshape(tf.math.real(tx_samples), [-1, 1, 1]), stride=1, padding='SAME')
+            TTI_corr_imag = tf.nn.conv1d(tf.reshape(tf.math.imag(rx_samples_tf), [1, -1, 1]), filters=tf.reshape(tf.math.imag(tx_samples), [-1, 1, 1]), stride=1, padding='SAME')
+
+            correlation = tf.complex(TTI_corr_real, TTI_corr_imag)
+            correlation = tf.math.abs(correlation)
+            correlation = tf.reshape(correlation, [-1])
+            correlation_mean = tf.reduce_mean(correlation)
+                       
+            TTI_offset_max = tf.math.argmax(correlation)-len(tx_samples)//2 + n_zeros + 1
+            correlation_short = correlation[tf.math.argmax(correlation)-16:tf.math.argmax(correlation)+16]
+
+            for offset, value in enumerate(correlation_short):
+                if value > correlation_mean*threshold:
+                    break
+            
+            TTI_offset_threshold = TTI_offset_max + offset - 16
+
+            return TTI_offset_max.numpy(), TTI_offset_threshold, correlation
         
         # adjust the stdev of the received samples to match the transmitted samples
         def _adjust_stdev(samples, rx_dev, tx_dev):
@@ -142,8 +188,8 @@ class SDR(Layer):
             rx_samples_tf = _adjust_stdev(rx_samples_tf, rx_std, tx_std)
 
             # find the start symbol
-            TTI_offset = _find_start_point(rx_samples_tf, tx_samples) 
-
+            TTI_offset, TTI_offset_threshold, TTI_correlation  = _find_start_point(rx_samples_tf, tx_samples, threshold = 5) 
+            
             # calculate noise floor
             rx_noise =  rx_samples_tf[TTI_offset-n_zeros+20:TTI_offset-20] 
             noise_p = tf.math.reduce_variance(rx_noise) 
@@ -162,7 +208,7 @@ class SDR(Layer):
             
             # plot debug graphs 
             if debug:
-                self._plot_debug_info(SAMPLES, rx_samples, TTI_offset, rx_samples_tf, tx_max_sample, rx_noise)
+                self._plot_debug_info(SAMPLES, rx_samples, TTI_offset, TTI_offset_threshold, n_zeros, TTI_correlation, rx_samples_tf, tx_max_sample, rx_noise, save=True)
                                         
             # if the process fails too many times, give up
             if fails > self.min_attempts: 
@@ -209,7 +255,23 @@ class SDR(Layer):
         return out, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time
     
         
-    def _plot_debug_info(self, tx_samples, all_rx_samples, TTI_offset, rx_samples, tx_samples_max_sample, rx_noise, save=False):
+    def _plot_debug_info(self, tx_samples, all_rx_samples, TTI_offset, TTI_offset_threshold, n_zeros, TTI_correlation, rx_samples, tx_samples_max_sample, rx_noise, save=False):
+        """
+        Generates debugging plots for the SDR process.
+
+        Args:
+        tx_samples (array): Transmitted samples.
+        all_rx_samples (array): All received samples.
+        TTI_offset (int): Offset for the start of TTI.
+        TTI_offset_threshold (int): Threshold offset for TTI.
+        n_zeros (int): Number of leading zeros in the samples (for noise floor measurement).
+        TTI_correlation (array): Correlation values for TTI detection.
+        rx_samples (array): Received samples after synchronization.
+        tx_samples_max_sample (float): Maximum sample value in the transmitted signal.
+        rx_noise (array): Received noise samples.
+        save (bool): Flag to save the plots as files.
+        """
+
         save_path_prefix = "pics/"
         picsize = (6, 3)
         
@@ -228,7 +290,7 @@ class SDR(Layer):
         ax.plot(np.abs(all_rx_samples), label='abs(RX sample)')
         ax.axvline(x=TTI_offset, c='r', lw=3, label='TTI start')
         ax.legend()
-        ax.set_title('Correlator for syncing the start of the second received TTI')
+        ax.set_title('Correlator for syncing the start of a fully received OFDM block')
         if save:
             plt.savefig(f'{save_path_prefix}_plot2.png')
         plt.show()
@@ -239,7 +301,7 @@ class SDR(Layer):
         ax.plot(np.abs(tx_samples), label='abs(TX samples)')
         ax.set_ylim(0, tx_samples_max_sample)
         ax.legend()
-        ax.set_title('Transmitted signal, one TTI')
+        ax.set_title('Transmitted signal, one OFDM block')
         if save:
             plt.savefig(f'{save_path_prefix}_plot3.png')
         plt.show()
@@ -276,3 +338,18 @@ class SDR(Layer):
             plt.savefig(f'{save_path_prefix}_plot6.png')
         plt.show()
         plt.close()
+
+        #TTI_offset, TTI_offset_threshold, TTI_correlation
+
+        fig, ax = plt.subplots(figsize=picsize)
+        ax.set_title('Correlator')
+        plt.plot(np.arange(-21,20), TTI_correlation[TTI_offset+len(tx_samples)//2-n_zeros-22:TTI_offset+len(tx_samples)//2 -n_zeros+19 ], label='correlation')
+        plt.grid()
+        plt.xlabel("Samples around peak correlation")
+        plt.ylabel("Complex conjugate correlation")
+        plt.axvline(x=0, color = 'r', linewidth=3, label='max cor offset')
+        plt.axvline(x=-(TTI_offset-TTI_offset_threshold), color = 'b', linewidth=3, label='threshold cor offset')
+        plt.legend()
+        if save:
+            plt.savefig(f'{save_path_prefix}_plot7.png')
+        plt.show()

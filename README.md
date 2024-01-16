@@ -39,6 +39,12 @@ Upon successful synchronization, the PSD for both the received signal and the ac
 
 Fig 6. Power spectral densities of the received noise during the unmodulated symbols, and modulated symbols
 
+The offset can be determined in two ways: either by identifying the peak correlation or by using a threshold, which is a multiplier applied to the average correlation (for example, a multiplier of 6 seems to work well).
+
+![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot7.png) 
+
+Fig 7. Correlation around the peak is shown. The blue line indicates offset detection based on the threshold, while the red line signifies offset detection based on the maximum value.
+
 After the synchronisation, the received IQ signals undergo scaling to align the magnitudes with those of the original signal to ensure compatibility with the Sionna demodulator. The output format is `[IQ, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time]`
 
 These pictures are created with the `Sionna_Pluto_SDR.ipynb` notebook located in this repository (debug=True). In the author's environment, the entire transmit-receive process typically takes around 25 milliseconds.
