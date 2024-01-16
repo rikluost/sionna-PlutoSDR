@@ -45,7 +45,15 @@ The offset can be determined in two ways: either by identifying the peak correla
 
 Fig 7. Correlation around the peak is shown. The blue line indicates offset detection based on the threshold, while the red line signifies offset detection based on the maximum value.
 
-After the synchronisation, the received IQ signals undergo scaling to align the magnitudes with those of the original signal to ensure compatibility with the Sionna demodulator. The output format is `[IQ, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time]`
+After the synchronisation, the received IQ signals undergo scaling to align the magnitudes with those of the original signal to ensure compatibility with the Sionna demodulator. The output format is `[IQ, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time]` where
+- IQ is the IQ data in format expected by Sionna demodulator
+- SINR is the measured SINR based on noise power measurement during the unmodulated symbols, and the mean power of the received and synchronised signal.
+- SDR_TX_GAIN is the actual TX gain setting used
+- SDR_RX_GAIN similar to above, the actual RX setting
+- fails+1 is the number of repeated processes if correlation check fails. If this happens, TX power is increased each time.
+- corr os the Pearson correlation of the tx and rx signals
+- sdr_time is the measured time from start of the SDR process to finishing it. When debug is enabled, it takes about 1.4sec and without it takes 25ms in authors computer.
+
 
 These pictures are created with the `Sionna_Pluto_SDR.ipynb` notebook located in this repository (debug=True). In the author's environment, the entire transmit-receive process typically takes around 25 milliseconds.
 
