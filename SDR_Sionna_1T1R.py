@@ -23,7 +23,7 @@ Current implementation supports only 1T1R, but as the HW supports 2T2R, it might
 Note that 2T2R with pluto requires additional RF pigtails and a bit of DIY.
 
 """
-
+ave
 import adi
 import numpy as np
 import tensorflow as tf
@@ -202,7 +202,7 @@ class SDR(Layer):
  
             # plot debug graphs 
             if debug:
-                self._plot_debug_info(SAMPLES, rx_samples_tf_i, TTI_offset, n_zeros, TTI_correlation, rx_samples_tf, tx_max_sample, rx_noise, save=False)
+                self._plot_debug_info(SAMPLES, rx_samples_tf_i, TTI_offset, n_zeros, TTI_correlation, rx_samples_tf, tx_max_sample, rx_noise, save=True)
 
             condition1 = tf.greater_equal(final_correlation, self.corr_threshold)
             condition2 = tf.greater(SINR, 3)
