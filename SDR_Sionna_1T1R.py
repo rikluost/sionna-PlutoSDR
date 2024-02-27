@@ -23,7 +23,7 @@ Current implementation supports only 1T1R, but as the HW supports 2T2R, it might
 Note that 2T2R with pluto requires additional RF pigtails and a bit of DIY.
 
 """
-ave
+
 import adi
 import numpy as np
 import tensorflow as tf
