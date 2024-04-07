@@ -2,16 +2,18 @@
 
 ## Introduction
 
-This project focuses on integrating the PlutoSDR radio into the Sionna framework. The main goal is to enable testing and demonstrations of simulated systems created with Sionna through a true over-the-air connection, thereby eliminating the need for a simulated radio channel. The implementation leverages PlutoSDR, an affordable Software-Defined Radio (SDR) developed by Analog Devices.
+This project focuses on integrating the PlutoSDR radio into the Sionna framework. The main goal is to enable testing and demonstrations of simulated systems created with Sionna through a true over-the-air connection, thereby if not eliminating the need for a simulated radio channel, providing a validation point for a research. 
+The implementation leverages PlutoSDR, an affordable Software-Defined Radio (SDR) developed by Analog Devices.
 
-The jupyter notebook `Sionna_Pluto_SDR.ipynb` provides an end to end example on how to use the functionality, both, with eager mode, and then as integrated Keras layer integrated in a simulated system.
+The jupyter notebook `Sionna_Pluto_SDR.ipynb` provides an end to end example on how to use the functionality.
 
 
 ## Functionality
 
 The system is designed to receive modulated In-Phase and Quadrature (IQ) signals produced by the Sionna modulator. These signals are then sent through the radio interface using the Transmission (TX) port of the Software-Defined Radio (SDR). In Figure 1, the absolute values of the complex IQ samples are illustrated, while Figure 2 displays the power spectral density (PSD) of the transmitted signal.
 
-n addition to configuring the modulator's IQ output, users have the option to set parameters such as SDR TX gain, RX gain, and the number of extra unmodulated symbols. The unmodulated symbols are utilized for Signal-to-Interference-plus-Noise Ratio (SINR) estimations.
+n addition to configuring the modulator's IQ output, users have the option to set parameters such as SDR RX gain, and the number of extra unmodulated symbols. The unmodulated symbols are utilized for Signal-to-Interference-plus-Noise Ratio (SINR) estimations. The system employs a straightforward power control algorithm that maintains the SINR within predefined limits, eliminating the need to manually configure the TX power.
+
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot3.png) 
 
@@ -48,7 +50,6 @@ Fig 7. Correlation around the peak is shown. The blue line indicates offset dete
 After the synchronisation, the received IQ signals undergo scaling to align the magnitudes with those of the original signal to ensure compatibility with the Sionna demodulator. The output format is `[IQ, SINR, SDR_TX_GAIN, SDR_RX_GAIN, fails + 1, corr, sdr_time]` where
 - IQ is the IQ data in format expected by Sionna demodulator
 - SINR is the measured SINR based on noise power measurement during the unmodulated symbols, and the mean power of the received and synchronised signal.
-- SDR_TX_GAIN is the actual TX gain setting used
 - SDR_RX_GAIN similar to above, the actual RX setting
 - fails+1 is the number of repeated processes if correlation check fails. If this happens, TX power is increased each time.
 - corr os the Pearson correlation of the tx and rx signals

@@ -22,6 +22,8 @@ Tested to work with the sionna ofdm modulator and demodulator, however any other
 Current implementation supports only 1T1R, but as the HW supports 2T2R, it might be supported later. 
 Note that 2T2R with pluto requires additional RF pigtails and a bit of DIY.
 
+This version comes with automatic TX power control to keep the SINR in between minSINR maxSINR (e.g. 5, and 35, correspondingly)
+
 """
 
 import adi
@@ -43,8 +45,7 @@ class SDR(Layer):
         self.SDR_TX_FREQ = int(SDR_TX_FREQ)
         self.SDR_TX_BANDWIDTH = int(RF_BANDWIDTH)
         self.SampleRate = SampleRate
-        self.corr_threshold = 5
-        self.min_attempts = 10
+        self.corr_threshold = 10
         self.sdr_setup_done = False
 
     def setup_sdr(self):
@@ -60,16 +61,15 @@ class SDR(Layer):
             self.sdr_pluto.rx_rf_bandwidth = self.SDR_TX_BANDWIDTH
             self.sdr_pluto.rx_destroy_buffer()
             self.sdr_setup_done = True
+            
         
     def receive_samples(self):
         self.sdr_pluto.rx_destroy_buffer()
         rx_samples = self.sdr_pluto.rx()
         return np.array(rx_samples, dtype=np.complex64)
     
-    def transmit_samples(self, tx_samples_out, SDR_TX_GAIN, SDR_RX_GAIN, num_samples,n_zeros):
+    def transmit_samples(self, tx_samples_out, num_samples,n_zeros):
         self.sdr_pluto.tx_cyclic_buffer = True # enable cyclic buffer for TX
-        self.sdr_pluto.tx_hardwaregain_chan0 = int(SDR_TX_GAIN) # set the TX gain
-        self.sdr_pluto.rx_hardwaregain_chan0 = int(SDR_RX_GAIN) # set the RX gain
         self.sdr_pluto.rx_buffer_size = (num_samples+n_zeros)*3 # set the RX buffer size to 3 times the number of samples
         self.sdr_pluto.tx_destroy_buffer() # empty TX buffer
         self.sdr_pluto.tx(tx_samples_out) # start transmitting the samples in a cyclic manner
@@ -78,19 +78,23 @@ class SDR(Layer):
         self.sdr_pluto.tx_destroy_buffer() # empty TX buffer
         self.sdr_pluto.rx_destroy_buffer()
 
-    def update_txp(self):
+    def update_txp_down(self):
+        if self.sdr_pluto.tx_hardwaregain_chan0 >= -40:
+            self.sdr_pluto.tx_hardwaregain_chan0 = self.sdr_pluto.tx_hardwaregain_chan0 - 2
+        
+    def update_txp_up(self):
         if self.sdr_pluto.tx_hardwaregain_chan0 <= -2:
             self.sdr_pluto.tx_hardwaregain_chan0 = self.sdr_pluto.tx_hardwaregain_chan0 + 2
-        time.sleep(0.05)
-
-    def call(self, SAMPLES, SDR_TX_GAIN=0, SDR_RX_GAIN=30, add_td_symbols = 0, threshold=6, debug=False, power_max_tx_scaling=1):
+        
+    def call(self, SAMPLES, SDR_RX_GAIN=30, add_td_symbols = 0, threshold=0, debug=False, power_max_tx_scaling=1, minSINR=5, maxSINR=30):
         now = time.time() # for measuing the duration of the process
         self.setup_sdr()
         n_zeros = 500 # number of leading zeros for noise floor measurement
         out_shape = list(SAMPLES.shape) # store the input tensor shape
         num_samples = SAMPLES.shape[-1] # number of samples in the input
         SAMPLES = tf.reshape(SAMPLES, [-1]) # flatten the input tensor
-        
+        self.sdr_pluto.rx_hardwaregain_chan0 = SDR_RX_GAIN
+
         # DC offset removal from signal, stdev calculation
         def _offset_removal(samples):
             stdev =  tf.math.reduce_std(samples) # standard deviation of the input samples
@@ -175,7 +179,7 @@ class SDR(Layer):
         tx_samples, tx_max_sample = _sdr_tx_scaling(tx_samples, power_max_tx_scaling)
         tx_samples_out = _add_leading_zeros(tx_samples) 
         
-        tf.py_function(func=self.transmit_samples, inp=[tx_samples_out,SDR_TX_GAIN, SDR_RX_GAIN, num_samples,n_zeros], Tout=[])
+        tf.py_function(func=self.transmit_samples, inp=[tx_samples_out, num_samples,n_zeros], Tout=[])
 
         rx_samples_tf = tf.ones([SAMPLES.shape[0] + add_td_symbols], dtype=tf.complex64)
         
@@ -202,24 +206,32 @@ class SDR(Layer):
  
             # plot debug graphs 
             if debug:
-                self._plot_debug_info(SAMPLES, rx_samples_tf_i, TTI_offset, n_zeros, TTI_correlation, rx_samples_tf, tx_max_sample, rx_noise, save=True)
+                self._plot_debug_info(SAMPLES, rx_samples_tf_i, TTI_offset, n_zeros, TTI_correlation, rx_samples_tf, tx_max_sample, rx_noise, save=False)
 
-            condition1 = tf.greater_equal(final_correlation, self.corr_threshold)
-            condition2 = tf.greater(SINR, 3)
-            combined_condition = tf.logical_and(condition1, condition2)
+            condition1 = tf.greater(final_correlation, self.corr_threshold)
+            condition2 = tf.greater(SINR, minSINR)
+            combined_condition2 = tf.logical_and(condition1, condition2)
+            
+            condition3 = tf.less(SINR, maxSINR)
+            combined_condition = tf.logical_and(tf.logical_and(condition1, condition2), condition3)
 
-            success = tf.cond(combined_condition,
-                lambda: tf.constant(1),  # If the condition is True, set success to 1
-                lambda: tf.constant(0)   # If the condition is False, you might want to do something else
+            tf.cond(
+                tf.logical_not(combined_condition2),
+                self.update_txp_up, 
+                lambda: tf.constant(0)  
             )
 
             tf.cond(
-                tf.logical_not(combined_condition),
-                self.update_txp,  # This function will execute if combined_condition is False
-                lambda: tf.constant(0)  # This lambda does nothing but is necessary for tf.cond structure
+                tf.logical_not(condition3),
+                self.update_txp_down,  
+                lambda: tf.constant(0)  
             )
 
-
+            success = tf.cond(combined_condition,
+                lambda: tf.constant(1),  
+                lambda: tf.constant(0) 
+            )
+            
             return success, rx_samples_tf, SINR, final_correlation
 
         def condition(success, rx_samples_tf, SINR, final_correlation):
@@ -229,7 +241,7 @@ class SDR(Layer):
             cond=condition,
             body=loop_body,
             loop_vars=[success, rx_samples_tf, SINR, final_correlation],)
-        
+      
         tf.py_function(func=self.close_tx, inp=[], Tout=[])
         
         # reshape the output tensor to match the input tensor shape        
@@ -246,12 +258,10 @@ class SDR(Layer):
         # calculate the duration of the process
         sdr_time=time.time()-now
 
-        # return the output tensor, SINR, TX and RX gains, number of failures, correlation and the duration of the process
-        return out, SINR, self.sdr_pluto.tx_hardwaregain_chan0, SDR_RX_GAIN, 1, final_correlation, sdr_time
+        return out, SINR, self.sdr_pluto.tx_hardwaregain_chan0, self.sdr_pluto.rx_hardwaregain_chan0, 1, final_correlation, sdr_time
     
         
     def _plot_debug_info(self, tx_samples, all_rx_samples, TTI_offset, n_zeros, TTI_correlation, rx_samples, tx_samples_max_sample, rx_noise, save=False):
-
 
         save_path_prefix = "pics/"
         picsize = (6, 3)
