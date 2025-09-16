@@ -1,4 +1,4 @@
-# Enabling Over-the-Air Testing: Integration of PlutoSDR into Sionna Framework 
+# Enabling Over-the-Air Testing: Integration of PlutoSDR into NVIDIA Sionna Framework 
 
 ## Introduction
 
