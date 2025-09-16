@@ -32,9 +32,9 @@ DEFAULT_RX_BUFFER_MULTIPLIER = 3  # RX buffer size multiplier
 DEFAULT_NOISE_GUARD_SAMPLES = 20  # Guard samples around noise measurement window
 
 # Debug and Visualization
-DEFAULT_DEBUG = True  # Enable debug plots
+DEFAULT_DEBUG = False  # Enable debug plots
 DEFAULT_PLOT_SIZE = (6, 3)  # Default plot size for debug graphs
-DEFAULT_SAVE_PLOTS = True  # Save debug plots to files
+DEFAULT_SAVE_PLOTS = False  # Save debug plots to files
 DEFAULT_PICS_PATH = "pics/"  # Path for saving debug plots
 
 # Font configuration for plots
