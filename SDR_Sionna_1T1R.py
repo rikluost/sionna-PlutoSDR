@@ -15,41 +15,90 @@ Prerequisites (tested with Ubuntu 22.04) are:
 - libad9361-iio, AD9361 the Analog Devices RF chip
 - pyadi-iio, Python API for PlutoSDR
 
-Limitation, the batch size must be 1
+The batch size must be 1
 
 Tested to work with the sionna ofdm modulator and demodulator, however any other should work
 
-Current implementation supports only 1T1R, but as the HW supports 2T2R, it might be supported later. 
-Note that 2T2R with pluto requires additional RF pigtails and a bit of DIY.
+This implementation supports only 1T1R.
 
 This version comes with automatic TX power control to keep the SINR in between minSINR maxSINR (e.g. 5, and 35, correspondingly)
 
 """
 
-import adi
+from typing import Optional, Tuple, Union
+
+try:
+    import adi
+except Exception as e:
+    if "OpenSSL error" in str(e):
+        try:
+            from adi.ad936x import Pluto as adi_Pluto
+            class adi:
+                Pluto = adi_Pluto
+        except Exception as e2:
+            raise e
+    else:
+        raise e
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.layers import Layer
 import time
-import sys
-from scipy.stats import pearsonr
 from matplotlib import pyplot as plt
-plt.rcParams['font.size'] = 9.0
+from SDR_config import SDRConfig, default_config
+
+ComplexTensor = tf.Tensor
 
 class SDR(Layer):
+    """Optimized SDR Layer for PlutoSDR integration with Sionna.
+    
+    This layer provides over-the-air testing capabilities using PlutoSDR
+    with automatic power control and synchronization.
+    """
+    
+    def _get_param_or_default(self, param_value, config_value):
+        """Helper method to get parameter value or default from config."""
+        return param_value if param_value is not None else config_value
 
-    def __init__(self, SDR_TX_IP, SDR_TX_FREQ, RF_BANDWIDTH, SampleRate):
+    def __init__(self, 
+                 SDR_TX_IP: Optional[str] = None, 
+                 SDR_TX_FREQ: Optional[float] = None, 
+                 RF_BANDWIDTH: Optional[float] = None, 
+                 SampleRate: Optional[float] = None, 
+                 config: Optional[SDRConfig] = None) -> None:
         super().__init__()
-        # Class variables from inputs
-        self.SDR_TX_IP = SDR_TX_IP
-        self.SDR_TX_FREQ = int(SDR_TX_FREQ)
-        self.SDR_TX_BANDWIDTH = int(RF_BANDWIDTH)
+        
+        # Use provided config or default config
+        if config is None:
+            config = default_config
+        self.config = config
+        
+        # Set matplotlib font size from config
+        plt.rcParams['font.size'] = self.config.font_size
+        
+        # Class variables from inputs (override config if provided)
+        self.SDR_TX_IP = self._get_param_or_default(SDR_TX_IP, self.config.sdr_tx_ip)
+        self.SDR_TX_FREQ = int(self._get_param_or_default(SDR_TX_FREQ, self.config.sdr_tx_freq))
+        
+        # Calculate RF bandwidth from sample rate and config multiplier
+        if RF_BANDWIDTH is not None:
+            self.SDR_TX_BANDWIDTH = int(RF_BANDWIDTH)
+        elif SampleRate is not None:
+            self.SDR_TX_BANDWIDTH = self.config.get_rf_bandwidth(SampleRate)
+        else:
+            # This will be set later when SampleRate is known
+            self.SDR_TX_BANDWIDTH = None
+            
         self.SampleRate = SampleRate
-        self.corr_threshold = 10
+        self.corr_threshold = self.config.corr_threshold
         self.sdr_setup_done = False
 
-    def setup_sdr(self):
+    def setup_sdr(self) -> None:
+        """Initialize and configure the PlutoSDR hardware."""
         if not self.sdr_setup_done:
+            # Calculate RF bandwidth if not set during initialization
+            if self.SDR_TX_BANDWIDTH is None and self.SampleRate is not None:
+                self.SDR_TX_BANDWIDTH = self.config.get_rf_bandwidth(self.SampleRate)
+            
             # Setup the SDR
             self.sdr_pluto = adi.Pluto(self.SDR_TX_IP)
             self.sdr_pluto.sample_rate = int(self.SampleRate)
@@ -63,14 +112,16 @@ class SDR(Layer):
             self.sdr_setup_done = True
             
         
-    def receive_samples(self):
+    def receive_samples(self) -> np.ndarray:
+        """Receive samples from PlutoSDR with optimized buffer management."""
         self.sdr_pluto.rx_destroy_buffer()
         rx_samples = self.sdr_pluto.rx()
         return np.array(rx_samples, dtype=np.complex64)
     
-    def transmit_samples(self, tx_samples_out, num_samples,n_zeros):
+    def transmit_samples(self, tx_samples_out: ComplexTensor, num_samples: int, n_zeros: int) -> None:
+        """Transmit samples using PlutoSDR with optimized buffer configuration."""
         self.sdr_pluto.tx_cyclic_buffer = True # enable cyclic buffer for TX
-        self.sdr_pluto.rx_buffer_size = (num_samples+n_zeros)*3 # set the RX buffer size to 3 times the number of samples
+        self.sdr_pluto.rx_buffer_size = (num_samples + n_zeros) * self.config.rx_buffer_multiplier # set the RX buffer size
         self.sdr_pluto.tx_destroy_buffer() # empty TX buffer
         self.sdr_pluto.tx(tx_samples_out) # start transmitting the samples in a cyclic manner
 
@@ -79,42 +130,66 @@ class SDR(Layer):
         self.sdr_pluto.rx_destroy_buffer()
 
     def update_txp_down(self):
-        if self.sdr_pluto.tx_hardwaregain_chan0 >= -40:
-            self.sdr_pluto.tx_hardwaregain_chan0 = self.sdr_pluto.tx_hardwaregain_chan0 - 2
+        if self.sdr_pluto.tx_hardwaregain_chan0 >= self.config.tx_gain_min:
+            self.sdr_pluto.tx_hardwaregain_chan0 = self.sdr_pluto.tx_hardwaregain_chan0 - self.config.tx_gain_step
         
     def update_txp_up(self):
-        if self.sdr_pluto.tx_hardwaregain_chan0 <= -2:
-            self.sdr_pluto.tx_hardwaregain_chan0 = self.sdr_pluto.tx_hardwaregain_chan0 + 2
+        if self.sdr_pluto.tx_hardwaregain_chan0 <= self.config.tx_gain_max:
+            self.sdr_pluto.tx_hardwaregain_chan0 = self.sdr_pluto.tx_hardwaregain_chan0 + self.config.tx_gain_step
         
-    def call(self, SAMPLES, SDR_RX_GAIN=30, add_td_symbols = 0, threshold=0, debug=False, power_max_tx_scaling=1, minSINR=5, maxSINR=30):
-        now = time.time() # for measuing the duration of the process
+    def call(self, 
+             SAMPLES: ComplexTensor,
+             SDR_RX_GAIN: Optional[float] = None,
+             add_td_symbols: Optional[int] = None, 
+             threshold: Optional[float] = None,
+             debug: Optional[bool] = None,
+             power_max_tx_scaling: Optional[float] = None,
+             minSINR: Optional[float] = None,
+             maxSINR: Optional[float] = None) -> Tuple[ComplexTensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, float]:
+        # Use config values if parameters not provided (simplified parameter handling)
+        SDR_RX_GAIN = self._get_param_or_default(SDR_RX_GAIN, self.config.sdr_rx_gain)
+        add_td_symbols = self._get_param_or_default(add_td_symbols, self.config.add_td_symbols)
+        threshold = self._get_param_or_default(threshold, self.config.threshold)
+        debug = self._get_param_or_default(debug, self.config.debug)
+        power_max_tx_scaling = self._get_param_or_default(power_max_tx_scaling, self.config.power_max_tx_scaling)
+        minSINR = self._get_param_or_default(minSINR, self.config.min_sinr)
+        maxSINR = self._get_param_or_default(maxSINR, self.config.max_sinr)
+        
+        now = time.time() # for measuring the duration of the process
         self.setup_sdr()
-        n_zeros = 500 # number of leading zeros for noise floor measurement
+        n_zeros = self.config.n_zeros # number of leading zeros for noise floor measurement
         out_shape = list(SAMPLES.shape) # store the input tensor shape
         num_samples = SAMPLES.shape[-1] # number of samples in the input
         SAMPLES = tf.reshape(SAMPLES, [-1]) # flatten the input tensor
         self.sdr_pluto.rx_hardwaregain_chan0 = SDR_RX_GAIN
 
-        # DC offset removal from signal, stdev calculation
-        def _offset_removal(samples):
-            stdev =  tf.math.reduce_std(samples) # standard deviation of the input samples
-            tx_mean = tf.math.reduce_mean(samples) # mean of the input samples
-            samples = tf.math.subtract(samples, tx_mean) # remove DC offset
-            return samples, stdev # retun the samples and the stdev of the input samples
+        # Optimized DC offset removal and statistics calculation
+        @tf.function
+        def _offset_removal(samples: ComplexTensor) -> Tuple[ComplexTensor, tf.Tensor]:
+            """Remove DC offset and calculate standard deviation efficiently."""
+            tx_mean = tf.reduce_mean(samples)
+            samples_centered = samples - tx_mean
+            stdev = tf.math.reduce_std(samples_centered)
+            return samples_centered, stdev
 
-        # scale the samples for SDR input
-        def _sdr_tx_scaling(tx_samples, power_max_tx_scaling):
-            tx_samples_abs = tf.math.abs(tx_samples) # absolute values of the samples
-            tx_samples_abs_max = tf.reduce_max(tx_samples_abs,0) # take the maximum value of the samples
-            tx_samples_normalized = tx_samples / tf.cast(tx_samples_abs_max, tf.complex64)
-            scaling_factor = tf.cast(power_max_tx_scaling, tf.complex64) * tf.cast(2**14, tf.complex64)
-            tx_samples_scaled = tx_samples_normalized * scaling_factor
+        # Optimized sample scaling for SDR input
+        @tf.function
+        def _sdr_tx_scaling(tx_samples: ComplexTensor, power_max_tx_scaling: float) -> Tuple[ComplexTensor, tf.Tensor]:
+            """Scale samples for SDR input with optimized computation."""
+            tx_samples_abs_max = tf.reduce_max(tf.abs(tx_samples))
+            # Avoid division by zero
+            tx_samples_abs_max = tf.maximum(tx_samples_abs_max, self.config.epsilon)
+            
+            scaling_factor = tf.cast(power_max_tx_scaling * (2**self.config.adc_scaling_bits), tf.complex64)
+            tx_samples_scaled = (tx_samples / tf.cast(tx_samples_abs_max, tf.complex64)) * scaling_factor
             return tx_samples_scaled, tx_samples_abs_max
         
-        def _add_leading_zeros(tx_samples, n_zeros=n_zeros): # add leading zeros for noise floor measurement
-            leading_zeroes = tf.zeros(n_zeros, dtype=tf.dtypes.complex64) # leading zeroes f
-            samples_with_leading_zeros = tf.concat([leading_zeroes, tx_samples], axis=0) # add the leading zeros to the samples
-            return samples_with_leading_zeros
+        # Optimized leading zeros addition
+        @tf.function
+        def _add_leading_zeros(tx_samples: ComplexTensor, n_zeros: int) -> ComplexTensor:
+            """Add leading zeros for noise floor measurement efficiently."""
+            leading_zeros = tf.zeros(n_zeros, dtype=tf.complex64)
+            return tf.concat([leading_zeros, tx_samples], axis=0)
         
         def _find_start_point(rx_samples_tf, tx_samples, threshold, n_zeros=n_zeros): # find the start symbol and calculate the offset
 
@@ -167,21 +242,28 @@ class SDR(Layer):
             return TTI_offset, correlation, final_correlation
 
         
-        # adjust the stdev of the received samples to match the transmitted samples
+        # Optimized standard deviation adjustment
+        @tf.function
+        def _adjust_stdev(samples: ComplexTensor, rx_dev: tf.Tensor, tx_dev: tf.Tensor) -> ComplexTensor:
+            """Adjust received samples standard deviation to match transmitted samples."""
+            # Avoid division by zero
+            rx_dev_safe = tf.maximum(rx_dev, self.config.epsilon)
+            std_multiplier = tf.cast(tx_dev / rx_dev_safe * self.config.stdev_adjustment_factor, tf.complex64)
+            return samples * std_multiplier
         
-        def _adjust_stdev(samples, rx_dev, tx_dev):
-            std_multiplier = tf.cast(tx_dev, tf.complex64) / tf.cast(rx_dev, tf.complex64) * tf.constant(0.9, dtype=tf.complex64)
-            samples = tf.math.multiply(samples, std_multiplier)
-            return samples
-        
-        # prepare the tx signal, remove DC offset and scale for SDR input, add leading zeros
-        tx_samples, tx_std = _offset_removal(SAMPLES)
-        tx_samples, tx_max_sample = _sdr_tx_scaling(tx_samples, power_max_tx_scaling)
-        tx_samples_out = _add_leading_zeros(tx_samples) 
-        
-        tf.py_function(func=self.transmit_samples, inp=[tx_samples_out, num_samples,n_zeros], Tout=[])
+        # Prepare TX signal with optimized pipeline
+        try:
+            tx_samples, tx_std = _offset_removal(SAMPLES)
+            tx_samples, tx_max_sample = _sdr_tx_scaling(tx_samples, power_max_tx_scaling)
+            tx_samples_out = _add_leading_zeros(tx_samples, n_zeros)
+            
+            tf.py_function(func=self.transmit_samples, inp=[tx_samples_out, num_samples, n_zeros], Tout=[])
 
-        rx_samples_tf = tf.ones([SAMPLES.shape[0] + add_td_symbols], dtype=tf.complex64)
+            # Pre-allocate output tensor with correct shape
+            rx_samples_tf = tf.zeros([SAMPLES.shape[0] + add_td_symbols], dtype=tf.complex64)
+        except Exception as e:
+            print(f"Error in TX signal preparation: {e}")
+            raise
         
         final_correlation = tf.constant(0, dtype=tf.float32)
         success = tf.constant(0, dtype=tf.int32)
@@ -195,7 +277,7 @@ class SDR(Layer):
 
             TTI_offset, TTI_correlation, final_correlation  = _find_start_point(rx_samples_tf_i, tx_samples, threshold = threshold) 
 
-            rx_noise =  rx_samples_tf_i[TTI_offset-n_zeros+20:TTI_offset-20] 
+            rx_noise = rx_samples_tf_i[TTI_offset-n_zeros+self.config.noise_guard_samples:TTI_offset-self.config.noise_guard_samples] 
             noise_p = tf.math.reduce_variance(rx_noise) 
             
             rx_samples_tf = rx_samples_tf_i[TTI_offset:TTI_offset+num_samples+add_td_symbols] # cut the received samples to the length of the transmitted samples + additional symbols, starting from the start symbol
@@ -206,7 +288,7 @@ class SDR(Layer):
  
             # plot debug graphs 
             if debug:
-                self._plot_debug_info(SAMPLES, rx_samples_tf_i, TTI_offset, n_zeros, TTI_correlation, rx_samples_tf, tx_max_sample, rx_noise, save=False)
+                self._plot_debug_info(SAMPLES, rx_samples_tf_i, TTI_offset, n_zeros, TTI_correlation, rx_samples_tf, tx_max_sample, rx_noise, save=self.config.save_plots)
 
             condition1 = tf.greater(final_correlation, self.corr_threshold)
             condition2 = tf.greater(SINR, minSINR)
@@ -244,16 +326,14 @@ class SDR(Layer):
       
         tf.py_function(func=self.close_tx, inp=[], Tout=[])
         
-        # reshape the output tensor to match the input tensor shape        
-        try :
+        # Reshape output tensor with improved error handling
+        try:
             out_shape[-1] = out_shape[-1] + add_td_symbols
             out = tf.reshape(rx_samples_tf, out_shape)
-
-        # if the process fails, exit
-        except:
-            print("Something failed!")
+        except Exception as e:
+            print(f"Failed to reshape output tensor: {e}")
             tf.py_function(func=self.close_tx, inp=[], Tout=[])
-            sys.exit(1)
+            raise RuntimeError(f"SDR processing failed during output reshaping: {e}") from e
  
         # calculate the duration of the process
         sdr_time=time.time()-now
@@ -261,78 +341,254 @@ class SDR(Layer):
         return out, SINR, self.sdr_pluto.tx_hardwaregain_chan0, self.sdr_pluto.rx_hardwaregain_chan0, 1, final_correlation, sdr_time
     
         
-    def _plot_debug_info(self, tx_samples, all_rx_samples, TTI_offset, n_zeros, TTI_correlation, rx_samples, tx_samples_max_sample, rx_noise, save=False):
+    def _plot_debug_info(self, 
+                         tx_samples: np.ndarray,
+                         all_rx_samples: np.ndarray, 
+                         TTI_offset: int,
+                         n_zeros: int,
+                         TTI_correlation: np.ndarray,
+                         rx_samples: np.ndarray,
+                         tx_samples_max_sample: float,
+                         rx_noise: np.ndarray,
+                         save: bool = False) -> None:
+        """Generate debug plots with optimized rendering."""
 
-        save_path_prefix = "pics/"
-        picsize = (6, 3)
+        save_path_prefix = self.config.pics_path
+        picsize = self.config.plot_size
         
-        # Plot Correlator for syncing the start of the second received TTI
+        # Plot 1: Signal Overview with Synchronization Point
         fig, ax = plt.subplots(figsize=picsize)
-        ax.plot(np.abs(all_rx_samples), label='abs(RX sample)')
-        ax.axvline(x=TTI_offset, c='r', lw=3, label='TTI start')
+        ax.plot(np.abs(all_rx_samples), label='|RX Signal|')
+        ax.axvline(x=TTI_offset, color='red', linewidth=2, label='Sync Point')
+        ax.set_xlabel('Sample Index')
+        ax.set_ylabel('Amplitude')
+        ax.set_title('Received Signal Overview with Synchronization')
         ax.legend()
-        ax.set_title('Correlator for syncing the start of a fully received OFDM block')
+        ax.grid(True)
+        if save:
+            plt.savefig(f'{save_path_prefix}_plot1.png')
+        plt.show()
+        plt.close()
+
+
+
+        # Plot 2: Transmitted Signal Analysis
+        fig, ax = plt.subplots(figsize=picsize)
+        
+        # Convert tensors to NumPy
+        tx_samples_np = tx_samples.numpy() if hasattr(tx_samples, 'numpy') else np.array(tx_samples)
+        all_rx_samples_np = all_rx_samples.numpy() if hasattr(all_rx_samples, 'numpy') else np.array(all_rx_samples)
+        
+        # Extract the same synchronized portion that Plot 5 uses
+        tx_len = len(tx_samples_np)
+        if TTI_offset + tx_len <= len(all_rx_samples_np):
+            tx_samples_sync = tx_samples_np  # Full TX signal (matches the sync portion)
+        else:
+            available_len = len(all_rx_samples_np) - TTI_offset
+            tx_samples_sync = tx_samples_np[:available_len]  # Truncate to match available RX
+        
+        ax.plot(np.abs(tx_samples_sync), label='|TX Signal|')
+        ax.set_ylim(0, tx_samples_max_sample)
+        ax.set_xlabel('Sample Index')
+        ax.set_ylabel('Amplitude')
+        ax.set_title('Transmitted Signal')
+        ax.legend()
+        ax.grid(True)
         if save:
             plt.savefig(f'{save_path_prefix}_plot2.png')
         plt.show()
-        plt.grid()
         plt.close()
 
-        # Plot Transmitted signal, one TTI
+
+        # Plot 3: Received Signal Analysis (Synchronized)
         fig, ax = plt.subplots(figsize=picsize)
-        ax.plot(np.abs(tx_samples), label='abs(TX samples)')
+        
+        ax.plot(np.abs(rx_samples), label='|RX Signal|')
         ax.set_ylim(0, tx_samples_max_sample)
+        ax.set_xlabel('Sample Index')
+        ax.set_ylabel('Amplitude')
+        ax.set_title('Received Signal (Synchronized)')
         ax.legend()
-        ax.set_title('Transmitted signal, one OFDM block')
+        ax.grid(True)
         if save:
             plt.savefig(f'{save_path_prefix}_plot3.png')
         plt.show()
-        plt.grid()
         plt.close()
 
-        # Plot Received signal, one TTI, synchronized
+        # Plot 4: Transmitted Signal Power Spectral Density
         fig, ax = plt.subplots(figsize=picsize)
-        ax.plot(np.abs(rx_samples), label='abs(RX samples)')
-        ax.set_ylim(0, tx_samples_max_sample)
+        
+        # Convert to numpy if needed for PSD calculation
+        tx_samples_psd = tx_samples.numpy() if hasattr(tx_samples, 'numpy') else np.array(tx_samples)
+        
+        ax.psd(tx_samples_psd, label='TX Signal PSD')
+        ax.set_xlabel('Frequency (Normalized)')
+        ax.set_ylabel('Power Spectral Density (dB/Hz)')
+        ax.set_title('Transmitted Signal PSD')
         ax.legend()
-        ax.set_title('Received signal, synchronized')
+        ax.grid(True)
+        
         if save:
             plt.savefig(f'{save_path_prefix}_plot4.png')
         plt.show()
-        plt.grid()
         plt.close()
 
-        # Plot Transmitted signal PSD
+        # Plot 5: Received Signal and Noise Power Spectral Density
         fig, ax = plt.subplots(figsize=picsize)
-        ax.psd(tx_samples, label='TX Signal')
+        
+        # Convert to numpy if needed for PSD calculation
+        rx_samples_psd = rx_samples.numpy() if hasattr(rx_samples, 'numpy') else np.array(rx_samples)
+        rx_noise_psd = rx_noise.numpy() if hasattr(rx_noise, 'numpy') else np.array(rx_noise)
+        
+        ax.psd(rx_samples_psd, label='RX Signal')
+        ax.psd(rx_noise_psd, label='Noise')
+        
+        ax.set_xlabel('Frequency (Normalized)')
+        ax.set_ylabel('Power Spectral Density (dB/Hz)')
+        ax.set_title('Received Signal and Noise PSD')
         ax.legend()
-        ax.set_title('Transmitted signal PSD')
+        ax.grid(True)
+        
         if save:
             plt.savefig(f'{save_path_prefix}_plot5.png')
         plt.show()
         plt.close()
 
-        # Plot Received noise PSD and signal PSD
-        fig, ax = plt.subplots(figsize=picsize)
-        ax.psd(rx_samples, label='RX signal')
-        ax.psd(rx_noise, label='Noise')
-        ax.legend()
-        ax.set_title('Received noise PSD and signal PSD')
-        if save:
-            plt.savefig(f'{save_path_prefix}_plot6.png')
-        plt.show()
-        plt.close()
+        try:
+            fig, ax = plt.subplots(figsize=picsize)
+            
+            # Convert tensors to NumPy
+            tx_samples_np = tx_samples.numpy() if hasattr(tx_samples, 'numpy') else np.array(tx_samples)
+            all_rx_samples_np = all_rx_samples.numpy() if hasattr(all_rx_samples, 'numpy') else np.array(all_rx_samples)
+            rx_noise_np = rx_noise.numpy() if hasattr(rx_noise, 'numpy') else np.array(rx_noise)
+            
+            # Extract synchronized RX samples that correspond to TX signal
+            tx_len = len(tx_samples_np)
+            if TTI_offset + tx_len <= len(all_rx_samples_np):
+                rx_samples_sync = all_rx_samples_np[TTI_offset:TTI_offset + tx_len]
+            else:
+                available_len = len(all_rx_samples_np) - TTI_offset
+                rx_samples_sync = all_rx_samples_np[TTI_offset:TTI_offset + available_len]
+            
+            # Signal power over time (windowed) using synchronized samples
+            window_size = max(50, len(rx_samples_sync)//20)
+            rx_power = []
+            noise_power = []
+            time_windows = []
+            
+            for i in range(0, len(rx_samples_sync)-window_size, window_size//2):
+                window = rx_samples_sync[i:i+window_size]
+                rx_power.append(np.mean(np.abs(window)**2))
+                time_windows.append(i + window_size//2)
+                
+            for i in range(0, len(rx_noise_np)-window_size//4, window_size//8):
+                if i+window_size//4 < len(rx_noise_np):
+                    noise_window = rx_noise_np[i:i+window_size//4]
+                    noise_power.append(np.mean(np.abs(noise_window)**2))
+            
+            # Pad noise_power to match rx_power length
+            while len(noise_power) < len(rx_power):
+                noise_power.append(noise_power[-1] if noise_power else 1e-12)
+            noise_power = noise_power[:len(rx_power)]
+            
+            # SINR estimation
+            sinr_values = 10*np.log10(np.array(rx_power) / (np.array(noise_power) + 1e-12))
+            
+            ax.plot(time_windows, sinr_values, label='SINR', marker='o', markersize=3)
+            ax.axhline(y=np.mean(sinr_values), color='red', linestyle='--', 
+                      label=f'Mean SINR: {np.mean(sinr_values):.1f} dB')
+            
+            ax.set_xlabel('Sample Index')
+            ax.set_ylabel('SINR (dB)')
+            ax.set_title('SINR over time')
+            ax.legend()
+            ax.grid(True)
+            
+            if save:
+                plt.savefig(f'{save_path_prefix}_plot6.png')
+            plt.show()
+            plt.close()
+        except Exception as e:
+            print(f"Error in SINR plot: {e}")
+            plt.close()
 
-        #TTI_offset, TTI_offset_threshold, TTI_correlation
 
+
+        # Plot 7: Correlation Analysis
         fig, ax = plt.subplots(figsize=picsize)
+        
+        correlation_range = np.arange(-20, 20)
+        start_idx = TTI_offset + len(tx_samples)//2 - 21
+        end_idx = TTI_offset + len(tx_samples)//2 + 19
+        correlation_data = TTI_correlation[start_idx:end_idx]
+        
+        ax.plot(correlation_range, correlation_data, label='Correlation')
+        ax.axvline(x=0, color='red', linewidth=2, label='Peak')
+        
+        ax.set_xlabel('Sample Offset from Peak')
+        ax.set_ylabel('Correlation Magnitude')
         ax.set_title('Correlator')
-        plt.plot(np.arange(-20,20), TTI_correlation[TTI_offset+len(tx_samples)//2-21:TTI_offset+len(tx_samples)//2+19 ], label='correlation')
-        plt.grid()
-        plt.xlabel("Samples around peak correlation")
-        plt.ylabel("Complex conjugate correlation")
-        plt.axvline(x=0, color = 'r', linewidth=3, label='max cor offset')
-        plt.legend()
+        ax.legend()
+        ax.grid(True)
+        
         if save:
             plt.savefig(f'{save_path_prefix}_plot7.png')
         plt.show()
+        plt.close()
+        
+        # Plot 8: AM-AM Linearity Analysis
+        try:
+            fig, ax = plt.subplots(figsize=picsize)
+            
+            # Convert tensors to NumPy
+            tx_samples_np = tx_samples.numpy() if hasattr(tx_samples, 'numpy') else np.array(tx_samples)
+            all_rx_samples_np = all_rx_samples.numpy() if hasattr(all_rx_samples, 'numpy') else np.array(all_rx_samples)
+            
+            # Extract synchronized RX samples that correspond to the same time instances as TX
+            tx_len = len(tx_samples_np)
+            
+            # Extract the synchronized portion of RX samples
+            if TTI_offset + tx_len <= len(all_rx_samples_np):
+                rx_samples_sync = all_rx_samples_np[TTI_offset:TTI_offset + tx_len]
+            else:
+                # Handle edge case where not enough samples
+                available_len = len(all_rx_samples_np) - TTI_offset
+                rx_samples_sync = all_rx_samples_np[TTI_offset:TTI_offset + available_len]
+                tx_samples_np = tx_samples_np[:available_len]
+            
+            # Calculate magnitudes for time-aligned samples
+            tx_magnitude = np.abs(tx_samples_np)
+            rx_magnitude = np.abs(rx_samples_sync)
+            
+            # Simple scatter plot
+            ax.scatter(tx_magnitude, rx_magnitude, alpha=0.6, s=10, label='TX vs RX')
+            
+            # Add ideal linear response line
+            max_mag = max(np.max(tx_magnitude), np.max(rx_magnitude))
+            ideal_line = np.linspace(0, max_mag, 100)
+            ax.plot(ideal_line, ideal_line, 'r--', linewidth=2, label='Ideal Linear')
+            
+            # Add best fit line
+            if len(tx_magnitude) > 1:
+                coeffs = np.polyfit(tx_magnitude, rx_magnitude, 1)
+                fit_line = np.poly1d(coeffs)
+                ax.plot(ideal_line, fit_line(ideal_line), 'g-', linewidth=2, 
+                        label=f'Best Fit (slope={coeffs[0]:.3f})')
+
+            
+            ax.set_xlabel('TX Magnitude')
+            ax.set_ylabel('RX Magnitude')
+            ax.set_title('AM-AM Linearity')
+            ax.legend(loc='lower right')
+            ax.grid(True)
+            
+            ax.set_aspect('equal', adjustable='box')
+            
+            if save:
+                plt.savefig(f'{save_path_prefix}_plot8.png')
+            plt.show()
+            plt.close()
+        except Exception as e:
+            print(f"Error in AM-AM Linearity plot: {e}")
+            plt.close()
+        
