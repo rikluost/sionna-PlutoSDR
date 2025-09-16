@@ -23,7 +23,7 @@ The transmission process utilizes a cyclic transmission of the modulated signal.
 
 Fig 1. Received Signal Overview with Synchronization - Shows the complete received signal with the synchronization point marked in red.
 
-### RX Signal
+### TX Signal
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot2.png) 
 
