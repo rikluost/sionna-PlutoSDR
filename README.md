@@ -15,38 +15,48 @@ The system is designed to receive modulated In-Phase and Quadrature (IQ) signals
 
 In addition to configuring the modulator's IQ output, users have the option to set parameters such as SDR RX gain, and the number of extra unmodulated symbols. The unmodulated symbols are utilized for Signal-to-Interference-plus-Noise Ratio (SINR) estimations. The system employs a straightforward power control algorithm that maintains the SINR within predefined limits, eliminating the need to manually configure the TX power.
 
+### RX Signal prior sync
+
+The transmission process utilizes a cyclic transmission of the modulated signal. To facilitate the calculation of Signal-to-Noise Ratio (SINR) estimates, zero-modulated symbols are inserted between successive instances of the modulated signal.
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot1.png) 
 
 Fig 1. Received Signal Overview with Synchronization - Shows the complete received signal with the synchronization point marked in red.
 
+### RX Signal
+
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot2.png) 
 
 Fig 2. Transmitted Signal - The original modulated OFDM signal that was transmitted.
+
+### RX Signal
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot3.png) 
 
 Fig 3. Received Signal (Synchronized) - The received signal after synchronization, showing one OFDM block.
 
+### TX PSD
+
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot4.png) 
 
 Fig 4. Transmitted Signal PSD - Power Spectral Density of the transmitted signal showing frequency characteristics.
 
-The transmission process utilizes a cyclic transmission of the modulated signal. To facilitate the calculation of Signal-to-Noise Ratio (SINR) estimates, zero-modulated symbols are inserted between successive instances of the modulated signal.
+### RX PSD
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot5.png) 
 
 Fig 5. Received Signal and Noise PSD - Power spectral densities comparing the received signal and noise floor.
 
-![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot6.png) 
 
-Fig 6. SINR over Time - Signal-to-Interference-plus-Noise Ratio analysis showing signal quality evolution.
+### Correlator for sync
 
 The transmitted and received IQ signals undergo correlation analysis to determine the start position of the modulated symbols. The offset can be determined in two ways: either by identifying the peak correlation or by using a threshold multiplier applied to the average correlation.
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot7.png) 
 
 Fig 7. Correlator - Cross-correlation analysis around the peak showing synchronization accuracy.
+
+### TX linearity
 
 ![alt text](https://github.com/rikluost/sionna-PlutoSDR/blob/main/pics/_plot8.png) 
 
